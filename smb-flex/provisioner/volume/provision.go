@@ -14,16 +14,12 @@ limitations under the License.
 package volume
 
 import (
-	"strconv"
-
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/klog"
 	"k8s.io/utils/exec"
 	"sigs.k8s.io/sig-storage-lib-external-provisioner/controller"
-	"sigs.k8s.io/sig-storage-lib-external-provisioner/util"
 )
 
 const (
@@ -64,22 +60,13 @@ type flexProvisioner struct {
 
 var _ controller.Provisioner = &flexProvisioner{}
 
-// Provision creates a volume i.e. the storage asset and returns a PV object for
-// the volume.
+
 func (p *flexProvisioner) Provision(options controller.ProvisionOptions) (*v1.PersistentVolume, error) {
-	err := p.createVolume(options)
-	if err != nil {
-		return nil, err
-	}
 
 	annotations := make(map[string]string)
 	annotations[annCreatedBy] = createdBy
-
 	annotations[annProvisionerID] = string(p.identity)
-	/*
-		The flex script for flexDriver=<vendor>/<driver> is in
-		/usr/libexec/kubernetes/kubelet-plugins/volume/exec/<vendor>~<driver>/<driver>
-	*/
+
 	server := options.StorageClass.Parameters["server"]
 	share := options.StorageClass.Parameters["share"]
 	secretRef := options.StorageClass.Parameters["secretRef"]
@@ -113,30 +100,4 @@ func (p *flexProvisioner) Provision(options controller.ProvisionOptions) (*v1.Pe
 	}
 
 	return pv, nil
-}
-
-func (p *flexProvisioner) createVolume(volumeOptions controller.ProvisionOptions) error {
-	extraOptions := map[string]string{}
-	extraOptions[optionPVorVolumeName] = volumeOptions.PVName
-
-	capacity := volumeOptions.PVC.Spec.Resources.Requests[v1.ResourceStorage]
-	requestBytes := capacity.Value()
-	requestMiB := int(util.RoundUpSize(requestBytes, 1024*1024))
-	requestGiB := int(util.RoundUpSize(requestBytes, 1024*1024*1024))
-	extraOptions["requestBytes"] = strconv.FormatInt(requestBytes, 10)
-	extraOptions["requestMiB"] = strconv.Itoa(requestMiB)
-	extraOptions["requestGiB"] = strconv.Itoa(requestGiB)
-
-	call := p.NewDriverCall(p.execCommand, provisionCmd)
-	call.AppendSpec(volumeOptions.StorageClass.Parameters, extraOptions)
-	output, err := call.Run()
-	if err != nil {
-		if output == nil || output.Message == "" {
-			klog.Errorf("Failed to create volume %s, output: %s, error: %s", volumeOptions, "<missing>", err.Error())
-		} else {
-			klog.Errorf("Failed to create volume %s, output: %s, error: %s", volumeOptions, output.Message, err.Error())
-		}
-		return err
-	}
-	return nil
 }

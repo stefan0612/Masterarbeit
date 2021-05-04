@@ -211,14 +211,6 @@ func driverMain(args []string) (ret returnMsg) {
 			ret.Status = retStatFailure
 			ret.Message = fmt.Sprintf("Error: %s", err)
 		}
-	case "provision":
-		log.Println(args)
-		ret.Status = retStatSuccess
-		ret.Message = "Called provision"
-	case "delete":
-		log.Println(args)
-		ret.Status = retStatSuccess
-		ret.Message = "Called delete"
 	default:
 		ret.Status = retStatNotSupported
 		ret.Message = retMsgUnsupportedOperation + ": " + operation

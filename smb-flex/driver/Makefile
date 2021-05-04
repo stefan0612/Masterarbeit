@@ -13,7 +13,7 @@
 # limitations under the License.
 
 build:
-	go build -a -installsuffix cgo
+	go build -a -installsuffix cgo -o smb-flex-driver
 
 clean:
-	rm -fr kubernetes-cifs-volumedriver
+	rm -fr smb-flex-driver

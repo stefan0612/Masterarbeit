@@ -16,18 +16,18 @@ if [ ! -d "/flexmnt/$driver_dir" ]; then
   mkdir "/flexmnt/$driver_dir"
 fi
 
-cp "/kubernetes-cifs-volumedriver" "/flexmnt/$driver_dir/.$DRIVER"
+cp "/smb-flex-driver" "/flexmnt/$driver_dir/.$DRIVER"
 mv -f "/flexmnt/$driver_dir/.$DRIVER" "/flexmnt/$driver_dir/$DRIVER"
 
 chmod +x "/flexmnt/$driver_dir/$DRIVER"
 
 echo '
-   _       _ _       _                  __   _  __     
-  (_)_   _| (_) ___ | |__  _ __ ___    / /__(_)/ _|___ 
+   _       _ _       _                  __   _  __
+  (_)_   _| (_) ___ | |__  _ __ ___    / /__(_)/ _|___
   | | | | | | |/ _ \| '_ \| '_ ` _ \  / / __| | |_/ __|
   | | |_| | | | (_) | | | | | | | | |/ / (__| |  _\__ \
  _/ |\__,_|_|_|\___/|_| |_|_| |_| |_/_/ \___|_|_| |___/
-|__/                                                   
+|__/
 Driver has been installed.
 Make sure /flexmnt from this container mounts to Kubernetes driver directory.
   k8s 1.8.x

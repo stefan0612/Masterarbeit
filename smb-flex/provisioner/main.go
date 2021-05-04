@@ -54,7 +54,6 @@ func main() {
 		klog.Fatalf("Invalid flags specified: must provide FlexVolume driver")
 	}
 
-	// Create the client according to whether we are running in or out-of-cluster
 	var config *rest.Config
 	var err error
 	if *master != "" || *kubeconfig != "" {
@@ -72,18 +71,14 @@ func main() {
 		klog.Fatalf("Failed to create client: %v", err)
 	}
 
-	// The controller needs to know what the server version is because out-of-tree
-	// provisioners aren't officially supported until 1.5
 	serverVersion, err := clientset.Discovery().ServerVersion()
 	if err != nil {
 		klog.Fatalf("Error getting server version: %v", err)
 	}
 
-	// Create the provisioner: it implements the Provisioner interface expected by
-	// the controller
 	flexProvisioner := vol.NewFlexProvisioner(clientset, *execCommand, *flexDriver)
 
-	// Start the provision controller which will dynamically provision NFS PVs
+	// Start the provision controller which will dynamically provision SMB PVs
 	pc := controller.NewProvisionController(
 		clientset,
 		*provisioner,
@@ -95,7 +90,6 @@ func main() {
 }
 
 // validateProvisioner tests if provisioner is a valid qualified name.
-// https://github.com/kubernetes/kubernetes/blob/release-1.4/pkg/apis/storage/validation/validation.go
 func validateProvisioner(provisioner string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if len(provisioner) == 0 {
