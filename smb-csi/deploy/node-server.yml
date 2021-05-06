@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodeserver
+spec:
+  selector:
+    matchLabels:
+      name: nodeserver
+  template:
+    metadata:
+      labels:
+        name: nodeserver
+    spec:
+      containers:
+        - name: driver
+          image: seitenbau/smb-csi-driver
+          imagePullPolicy: IfNotPresent
+          args:
+            - --nodeid=$(NODEID)
+          env:
+            - name: NODEID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: driversocket
+              mountPath: /csi
+
+        - name: node-driver-registrar
+          image: k8s.gcr.io/sig-storage/csi-node-driver-registrar:v2.1.0
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/smb/csi.sock
+            - --v=2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "rm -rf /registration/smb-reg.sock /csi/csi.sock"]
+          volumeMounts:
+            - name: driversocket
+              mountPath: /csi
+            - name: registration
+              mountPath: /registration
+      volumes:
+        - name: driversocket
+          hostPath:
+            path: /var/lib/kubelet/plugins/smb/
+            type: DirectoryOrCreate
+        - name: registration
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: DirectoryOrCreate
+
