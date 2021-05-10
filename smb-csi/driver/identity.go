@@ -19,7 +19,20 @@ func (d *Driver) GetPluginInfo(ctx context.Context, request *csi.GetPluginInfoRe
 }
 
 func (d *Driver) GetPluginCapabilities(ctx context.Context, request *csi.GetPluginCapabilitiesRequest) (*csi.GetPluginCapabilitiesResponse, error) {
-	panic("implement me")
+	resp := &csi.GetPluginCapabilitiesResponse{
+		Capabilities: []*csi.PluginCapability{
+			{
+				Type: &csi.PluginCapability_Service_{
+					Service: &csi.PluginCapability_Service{
+						Type: csi.PluginCapability_Service_CONTROLLER_SERVICE,
+					},
+				},
+			},
+		},
+	}
+
+	klog.Infof("Plugin-Capabilities: %+v", resp)
+	return resp, nil
 }
 
 func (d *Driver) Probe(ctx context.Context, request *csi.ProbeRequest) (*csi.ProbeResponse, error) {

@@ -1,0 +1,51 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: smb-service
+  labels:
+    run: smb-service
+spec:
+  clusterIP: 10.96.0.149
+  selector:
+    run: smb-service
+  ports:
+    - port: 445
+---
+kind: Pod
+apiVersion: v1
+metadata:
+  name: smb-server
+  labels:
+    run: smb-service
+spec:
+  containers:
+    - name: smb-server
+      image: andyzhangx/samba:win-fix
+      env:
+        - name: PERMISSIONS
+          value: "0777"
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: my-secret
+              key: username
+        - name: PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: my-secret
+              key: password
+      args: ["-u", "$(USERNAME);$(PASSWORD)", "-s", "share;/smbshare/;yes;no;no;all;none", "-p"]
+      volumeMounts:
+        - mountPath: /smbshare
+          name: data-volume
+      resources:
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      ports:
+        - containerPort: 445
+  volumes:
+    - name: data-volume
+      hostPath:
+        path: /smbshare-volume  # modify this to specify another path to store smb share data
+        type: DirectoryOrCreate

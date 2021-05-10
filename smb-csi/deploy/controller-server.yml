@@ -22,6 +22,7 @@ spec:
       labels:
         app: controllerserver
     spec:
+      serviceAccountName: controller-account
       containers:
         - name: driver
           image: seitenbau/smb-csi-driver

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	"net"
 	"net/url"
@@ -14,7 +16,7 @@ import (
 )
 
 const (
-	driverName    = "smb"
+	driverName    = "seitenbau.csi.smb"
 	driverVersion = "1.0.0"
 )
 
@@ -23,14 +25,27 @@ type Driver struct {
 	version  string
 	nodeID   string
 	server   *grpc.Server
+	restClient *kubernetes.Clientset
 }
 
 func NewDriver(nodeID string) *Driver {
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		klog.Infof("Error creating cluster config: %s", err)
+	}
+
+	restClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		klog.Infof("Error creating rest client: %s", err)
+	}
 
 	return &Driver{
 		name:	  driverName,
 		version:  driverVersion,
 		nodeID:   nodeID,
+		server:   nil,
+		restClient: restClient,
 	}
 }
 
@@ -68,7 +83,6 @@ func (d *Driver) Run(endpoint string) error {
 	csi.RegisterNodeServer(d.server, d)
 
 	klog.Infof("Server Started! Listening to %s", address)
-	klog.Infof("Drivername: %s, Driverversion: %s", driverName, driverVersion)
 
 	return d.server.Serve(listener)
 }

@@ -27,17 +27,20 @@ spec:
           volumeMounts:
             - name: driversocket
               mountPath: /csi
+            - name: stagemount
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
 
         - name: node-driver-registrar
           image: k8s.gcr.io/sig-storage/csi-node-driver-registrar:v2.1.0
           args:
             - --csi-address=/csi/csi.sock
-            - --kubelet-registration-path=/var/lib/kubelet/plugins/smb/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/seitenbau.csi.smb/csi.sock
             - --v=2
           lifecycle:
             preStop:
               exec:
-                command: ["/bin/sh", "-c", "rm -rf /registration/smb-reg.sock /csi/csi.sock"]
+                command: ["/bin/sh", "-c", "rm -rf /registration/seitenbau.csi.smb-reg.sock /csi/csi.sock"]
           volumeMounts:
             - name: driversocket
               mountPath: /csi
@@ -46,10 +49,14 @@ spec:
       volumes:
         - name: driversocket
           hostPath:
-            path: /var/lib/kubelet/plugins/smb/
+            path: /var/lib/kubelet/plugins/seitenbau.csi.smb/
             type: DirectoryOrCreate
         - name: registration
           hostPath:
             path: /var/lib/kubelet/plugins_registry/
+            type: DirectoryOrCreate
+        - name: stagemount
+          hostPath:
+            path: /var/lib/kubelet
             type: DirectoryOrCreate
 
