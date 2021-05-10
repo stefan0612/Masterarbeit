@@ -13,7 +13,6 @@ import (
 )
 
 func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	klog.Info("Stage Volume Called")
 
 	// Get all necessary mounting information from the request parameter
 	targetPath := request.GetStagingTargetPath()
@@ -62,12 +61,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 		}
 		return nil, status.Error(codes.Internal,"Failed mounting directory")
 	}
-	klog.Info("Stage Volume finished")
+
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
 func (d *Driver) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-	klog.Info("Unstage Volume Called")
 
 	targetPath := request.GetStagingTargetPath()
 	if _, statErr := os.Stat(targetPath); os.IsExist(statErr) {
@@ -81,12 +79,11 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstage
 	if deleteDirErr := os.RemoveAll(targetPath); os.IsExist(deleteDirErr) {
 		return nil, status.Error(codes.Internal,"Failed removing directory after unmount")
 	}
-	klog.Info("Unstage Volume finished")
+
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
 func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	klog.Info("Publish Volume Called")
 
 	stagingPath := request.GetStagingTargetPath()
 	targetPath := request.GetTargetPath()
@@ -112,14 +109,10 @@ func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublish
 		return nil, status.Error(codes.Internal,"Failed mounting directory")
 	}
 
-	klog.Infof("PublishVolume: stagingPath: %s", stagingPath)
-	klog.Infof("PublishVolume: targetPath: %s", targetPath)
-	klog.Info("Publish Volume finished")
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
 func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	klog.Info("Unpublish Volume Called")
 
 	targetPath := request.GetTargetPath()
 	if _, statErr := os.Stat(targetPath); os.IsExist(statErr) {
@@ -133,7 +126,7 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpub
 	if deleteDirErr := os.RemoveAll(targetPath); os.IsExist(deleteDirErr) {
 		return nil, status.Error(codes.Internal,"Failed removing directory after unmount")
 	}
-	klog.Info("Unpublish Volume finished")
+
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
@@ -167,15 +160,14 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, request *csi.NodeGetCa
 		Capabilities: capabilityObjects,
 	}
 
-	klog.Infof("Node Capabilities called: %+v", resp)
-
 	return resp, nil
 }
 
 func (d *Driver) NodeGetInfo(ctx context.Context, request *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+
 	resp := &csi.NodeGetInfoResponse{
 		NodeId: d.nodeID,
 	}
-	klog.Infof("NodeGetInfo: %+v", resp)
+
 	return resp, nil
 }

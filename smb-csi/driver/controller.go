@@ -6,7 +6,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog/v2"
 )
 
 func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -21,17 +20,12 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 		},
 	}
 
-	klog.Infof("Create Volume response %+v", resp)
-	klog.Infof("User request: %+v", request)
-
 	return resp, nil
 }
 
 func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
-	resp := &csi.DeleteVolumeResponse{}
 
-	klog.Infof("Delete Volume response: %+v", resp)
-	klog.Infof("User request: %+v", request)
+	resp := &csi.DeleteVolumeResponse{}
 
 	return resp, nil
 }
@@ -49,6 +43,7 @@ func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, request *csi.Va
 }
 
 func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
+
 	if d.restClient == nil {
 		return nil, status.Error(codes.Unavailable, "Not available because rest-client is missing")
 	}
@@ -80,8 +75,6 @@ func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesReques
 		})
 	}
 
-	klog.Infof("PVList: %+v", pvList)
-
 	return &csi.ListVolumesResponse{
 		Entries: volumes,
 	}, nil
@@ -112,8 +105,6 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 	resp := &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: capabilityObjects,
 	}
-
-	klog.Infof("Controller-Capabilities: %+v", resp)
 
 	return resp, nil
 }
