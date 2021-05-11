@@ -2,10 +2,6 @@ module smb-csi/driver
 
 go 1.13
 
-replace k8s.io/client-go => k8s.io/client-go v0.17.2
-
-replace k8s.io/apimachinery => k8s.io/apimachinery v0.17.2
-
 require (
 	github.com/container-storage-interface/spec v1.4.0
 	google.golang.org/grpc v1.37.0

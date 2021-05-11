@@ -46,6 +46,7 @@ spec:
               mountPath: /csi
             - name: registration
               mountPath: /registration
+
       volumes:
         - name: driversocket
           hostPath:

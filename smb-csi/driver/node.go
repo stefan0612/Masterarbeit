@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -131,17 +132,61 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpub
 }
 
 func (d *Driver) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
-	panic("implement me")
+
+	volumePath := request.GetVolumePath()
+	if volumePath == "" {
+		return nil, status.Error(codes.InvalidArgument, "Volume Path is missing")
+	}
+
+	var stat unix.Statfs_t
+	if err := unix.Statfs(volumePath, &stat); os.IsExist(err) {
+		return nil, status.Error(codes.InvalidArgument, "Error while getting volume stats")
+	}
+
+	var totalSize int64
+	var used int64
+	var available int64
+
+	// Total Disk Size on Current Node
+	totalSize = stat.Bsize * int64(stat.Blocks)
+
+	// Total Used Space from given Node, calculated by iterating over every file and adding the filesize to a counter
+	fileTraverseErr := filepath.Walk(volumePath, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			used += info.Size()
+		}
+		return err
+	})
+	if os.IsExist(fileTraverseErr) {
+		return nil, status.Error(codes.Internal, "Failed calculating used space")
+	}
+
+	// Available Size, calculated by subtracting used space from total space
+	available = totalSize - used
+
+	return &csi.NodeGetVolumeStatsResponse{
+		Usage: []*csi.VolumeUsage{
+			{
+				Unit: csi.VolumeUsage_BYTES,
+				Total: totalSize,
+				Available: available,
+				Used: used,
+			},
+		},
+	}, nil
 }
 
 func (d *Driver) NodeExpandVolume(ctx context.Context, request *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
-	panic("implement me")
+	return nil, status.Error(codes.Unimplemented, "Volume expansion is not supported for Filesystems")
 }
 
 func (d *Driver) NodeGetCapabilities(ctx context.Context, request *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
 
 	capabilities := []csi.NodeServiceCapability_RPC_Type {
-		// csi.NodeServiceCapability_RPC_GET_VOLUME_STATS,
+		csi.NodeServiceCapability_RPC_GET_VOLUME_STATS,
 		csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
 	}
 

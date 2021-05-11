@@ -17,6 +17,7 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 		Volume: &csi.Volume{
 			VolumeId: request.GetName(),
 			VolumeContext: request.GetParameters(),
+			CapacityBytes: request.GetCapacityRange().GetRequiredBytes(),
 		},
 	}
 
@@ -39,7 +40,55 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, request *csi.Con
 }
 
 func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, request *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
-	panic("implement me")
+
+	// These are all supported Volume Capability Modes, which SMB supports
+	supportedModes := []csi.VolumeCapability_AccessMode_Mode{
+		csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER,
+		csi.VolumeCapability_AccessMode_MULTI_NODE_READER_ONLY,
+		csi.VolumeCapability_AccessMode_MULTI_NODE_SINGLE_WRITER,
+		csi.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY,
+		csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+	}
+
+	var supportedCaps []*csi.VolumeCapability
+	for _, mode := range supportedModes {
+		supportedCaps = append(supportedCaps, &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{
+					FsType: "",
+				},
+			},
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: mode,
+			},
+		})
+	}
+
+	contains := func(slice []csi.VolumeCapability_AccessMode_Mode, val csi.VolumeCapability_AccessMode_Mode) bool {
+		isInSlice := false
+		for _, accessMode := range slice {
+			if accessMode == val { isInSlice = true }
+		}
+		return isInSlice
+	}
+
+	// Check if all requested Capabilities are supported
+	requestedCapabilities := request.GetVolumeCapabilities()
+	for _, capability := range requestedCapabilities {
+		// If at least one requested capability is not supported, set the error-message field of the response
+		if !contains(supportedModes, capability.GetAccessMode().GetMode()) {
+			return &csi.ValidateVolumeCapabilitiesResponse{
+				Message: "Requested Capabilities not supported",
+			}, nil
+		}
+	}
+
+	// Return the supportedCaps and leave the error-message field empty
+	return &csi.ValidateVolumeCapabilitiesResponse{
+		Confirmed: &csi.ValidateVolumeCapabilitiesResponse_Confirmed{
+			VolumeCapabilities: supportedCaps,
+		},
+	}, nil
 }
 
 func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
@@ -89,6 +138,7 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 	capabilities := []csi.ControllerServiceCapability_RPC_Type {
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
+		csi.ControllerServiceCapability_RPC_VOLUME_CONDITION,
 	}
 
 	var capabilityObjects []*csi.ControllerServiceCapability

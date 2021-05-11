@@ -48,6 +48,29 @@ spec:
           volumeMounts:
             - mountPath: /csi
               name: driversocket
+
+        - name: external-health-monitor-controller
+          image: gcr.io/k8s-staging-sig-storage/csi-external-health-monitor-controller:canary
+          args:
+            - --v=5
+            - --csi-address=/csi/csi.sock
+            - --leader-election
+            - --http-endpoint=:8080
+          volumeMounts:
+            - name: driversocket
+              mountPath: /csi
+          ports:
+            - containerPort: 8080
+              name: http-endpoint
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 1
+            httpGet:
+              port: http-endpoint
+              path: /healthz/leader-election
+            initialDelaySeconds: 10
+            timeoutSeconds: 10
+            periodSeconds: 20
       volumes:
         - name: driversocket
           emptyDir: {}
