@@ -5,38 +5,136 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/klog/v2"
+	"os"
+	"path/filepath"
+	"smb-csi/driver/state"
+	"sort"
+	"strconv"
 )
 
 func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 
-	if request.GetName() == "" { return nil, status.Error(codes.InvalidArgument, "No VolumeID specified") }
-	if len(request.GetParameters()) == 0  {return nil, status.Error(codes.InvalidArgument, "PV should contain at least the source attribute")}
+	requestCapacity := request.GetCapacityRange().GetRequiredBytes()
+	requestContentSource := request.GetVolumeContentSource()
+	requestName := request.GetName()
+	requestParameters := request.GetParameters()
 
-	resp := &csi.CreateVolumeResponse{
-		Volume: &csi.Volume{
-			VolumeId: request.GetName(),
-			VolumeContext: request.GetParameters(),
-			CapacityBytes: request.GetCapacityRange().GetRequiredBytes(),
-		},
+	if requestName == "" { return nil, status.Error(codes.InvalidArgument, "No VolumeID specified") }
+	if len(requestParameters) == 0  {return nil, status.Error(codes.InvalidArgument, "PV should contain at least the source attribute")}
+
+	vol, err := d.state.GetVolumeByName(requestName)
+	if err == nil {
+		if vol.VolSize < requestCapacity {
+			return nil, status.Error(codes.AlreadyExists, "PV with same name and lower size than requested already exists")
+		} else {
+			klog.Infof("Volume already exists")
+			return &csi.CreateVolumeResponse{
+				Volume: &csi.Volume{
+					VolumeId:           vol.VolID,
+					CapacityBytes:      vol.VolSize,
+					VolumeContext:      requestParameters,
+					ContentSource:      requestContentSource,
+				},
+			}, nil
+		}
 	}
 
-	return resp, nil
+	volumeID := string(uuid.NewUUID())
+	path := filepath.Join(driverStateDir, volumeID)
+	if mountErr := os.MkdirAll(path, 0777); mountErr != nil {
+		klog.Infof("Failed create state dir %s", mountErr.Error())
+		return nil, status.Error(codes.Internal, "Failed creating local PV")
+	}
+	klog.Info("Created state dir")
+
+	newVol := state.Volume{
+		VolID: volumeID,
+		VolName: requestName,
+		VolSize: requestCapacity,
+		VolPath: filepath.Join(driverStateDir, volumeID),
+		VolAccessType: state.MountAccess,
+		Ephemeral: false,
+	}
+
+	if updateErr := d.state.UpdateVolume(newVol); updateErr != nil {
+		return nil, status.Error(codes.Internal, updateErr.Error())
+	}
+
+	return &csi.CreateVolumeResponse{
+		Volume: &csi.Volume{
+			VolumeId: volumeID,
+			VolumeContext: requestParameters,
+			CapacityBytes: requestCapacity,
+			ContentSource: requestContentSource,
+		},
+	}, nil
 }
 
 func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 
-	resp := &csi.DeleteVolumeResponse{}
+	requestID := request.GetVolumeId()
+	path := filepath.Join(driverStateDir, requestID)
 
-	return resp, nil
+	vol, err := d.state.GetVolumeByID(requestID)
+	if err != nil {
+		return &csi.DeleteVolumeResponse{}, nil
+	}
+	if vol.IsAttached || vol.IsPublished || vol. IsStaged {
+		return nil, status.Error(codes.FailedPrecondition, "PV Cannot be deleted while in use")
+	}
+
+	if removeDirErr := os.RemoveAll(path); removeDirErr != nil && os.IsNotExist(removeDirErr) {
+		return nil, status.Error(codes.Internal, removeDirErr.Error())
+	}
+
+	if deleteVolErr := d.state.DeleteVolume(requestID); deleteVolErr != nil {
+		return nil, status.Error(codes.Internal, deleteVolErr.Error())
+	}
+
+	return &csi.DeleteVolumeResponse{}, nil
 }
 
 func (d *Driver) ControllerPublishVolume(ctx context.Context, request *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
-	return nil, status.Error(codes.Unavailable,"Filesystem-attach is not supported")
+
+	vol, err := d.state.GetVolumeByID(request.GetVolumeId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "Failed Getting Volume by ID")
+	}
+
+	nodeID := request.GetNodeId()
+	if nodeID == "" {
+		return nil, status.Error(codes.InvalidArgument, "NodeID missing")
+	}
+
+	vol.NodeID = nodeID
+	vol.IsAttached = true
+
+	if updateErr := d.state.UpdateVolume(vol); updateErr != nil {
+		return nil, status.Error(codes.Internal, "Failed updating Volume State")
+	}
+
+	return &csi.ControllerPublishVolumeResponse{}, nil
+	// return nil, status.Error(codes.Unavailable,"Filesystem-attach is not supported")
 }
 
 func (d *Driver) ControllerUnpublishVolume(ctx context.Context, request *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
-	return nil, status.Error(codes.Unavailable,"Filesystem-detach is not supported")
+
+	vol, err := d.state.GetVolumeByID(request.GetVolumeId())
+	if err != nil {
+		return &csi.ControllerUnpublishVolumeResponse{}, nil
+	}
+
+	vol.NodeID = ""
+	vol.IsAttached = false
+
+	if updateErr := d.state.UpdateVolume(vol); updateErr != nil {
+		return nil, status.Error(codes.Internal, "Failed updating Volume State")
+	}
+
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
+	// return nil, status.Error(codes.Unavailable,"Filesystem-detach is not supported")
 }
 
 func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, request *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
@@ -93,39 +191,57 @@ func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, request *csi.Va
 
 func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
 
-	if d.restClient == nil {
-		return nil, status.Error(codes.Unavailable, "Not available because rest-client is missing")
+	var entries []*csi.ListVolumesResponse_Entry
+	nextToken := ""
+
+	vols := d.state.GetVolumes()
+	volumeLength := len(vols)
+	sort.Slice(vols, func(i, j int) bool {
+		return vols[i].VolID < vols[j].VolID
+	})
+
+	maxEntries := int(request.GetMaxEntries())
+	if maxEntries < 1 { maxEntries = volumeLength }
+
+	startingToken := request.GetStartingToken()
+	if startingToken == "" { startingToken = "1" }
+
+	startingIndex, parseErr := strconv.Atoi(startingToken)
+	if parseErr != nil {
+		return nil, status.Error(codes.InvalidArgument, "StartingToken must be a number")
+	}
+	if startingIndex > volumeLength {
+		return &csi.ListVolumesResponse{}, nil
+	}
+	if startingIndex < 1 {
+		startingIndex = 1
 	}
 
-	pvClient := d.restClient.CoreV1().PersistentVolumes()
-	pvList, err := pvClient.List(metav1.ListOptions{})
+	for index := startingIndex - 1; index < volumeLength && index < startingIndex + maxEntries - 1; index++ {
 
-	if err != nil {
-		return nil, status.Error(codes.Canceled, "Failed getting volume list")
-	}
+		vol := vols[index]
+		healthy, reason := healthCheck(vol)
 
-	var volumes []*csi.ListVolumesResponse_Entry
-	for _, pv := range pvList.Items {
-
-		if pv.Status.Phase != "Available" ||
-			pv.Spec.PersistentVolumeSource.CSI.Driver != driverName { continue }
-
-		volumes = append(volumes, &csi.ListVolumesResponse_Entry{
+		entries = append(entries, &csi.ListVolumesResponse_Entry{
 			Volume: &csi.Volume{
-				VolumeId: pv.GetName(),
-				VolumeContext: pv.Spec.PersistentVolumeSource.CSI.VolumeAttributes,
+				VolumeId: vol.VolID,
+				CapacityBytes: vol.VolSize,
 			},
 			Status: &csi.ListVolumesResponse_VolumeStatus{
+				PublishedNodeIds: []string{vol.NodeID},
 				VolumeCondition: &csi.VolumeCondition{
-					Abnormal: pv.Status.Reason != "",
-					Message: pv.Status.Message,
+					Abnormal: !healthy,
+					Message: reason,
 				},
 			},
 		})
 	}
 
+	if startingIndex + maxEntries < volumeLength { nextToken = strconv.Itoa(startingIndex + maxEntries)}
+
 	return &csi.ListVolumesResponse{
-		Entries: volumes,
+		Entries: entries,
+		NextToken: nextToken,
 	}, nil
 }
 
@@ -137,6 +253,7 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 
 	capabilities := []csi.ControllerServiceCapability_RPC_Type {
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 		csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
 		csi.ControllerServiceCapability_RPC_VOLUME_CONDITION,
 	}
@@ -178,3 +295,4 @@ func (d *Driver) ControllerExpandVolume(ctx context.Context, request *csi.Contro
 func (d *Driver) ControllerGetVolume(ctx context.Context, request *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
 	panic("implement me")
 }
+

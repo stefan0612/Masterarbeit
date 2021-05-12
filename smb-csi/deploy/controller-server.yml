@@ -39,10 +39,21 @@ spec:
           volumeMounts:
             - name: driversocket
               mountPath: /csi
+
         - name: external-provisioner
           image: k8s.gcr.io/sig-storage/csi-provisioner:v2.1.0
           args:
             - -v=2
+            - --csi-address=/csi/csi.sock
+            - --leader-election
+          volumeMounts:
+            - mountPath: /csi
+              name: driversocket
+
+        - name: external-attacher
+          image: gcr.io/k8s-staging-sig-storage/csi-attacher:canary
+          args:
+            - -v=5
             - --csi-address=/csi/csi.sock
             - --leader-election
           volumeMounts:

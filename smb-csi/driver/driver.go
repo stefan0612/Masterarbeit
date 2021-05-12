@@ -13,11 +13,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"smb-csi/driver/state"
 )
 
 const (
 	driverName    = "seitenbau.csi.smb"
 	driverVersion = "1.0.0"
+	driverStateDir	  = "/csi-data-dir"
 )
 
 type Driver struct {
@@ -26,27 +28,41 @@ type Driver struct {
 	nodeID   string
 	server   *grpc.Server
 	restClient *kubernetes.Clientset
+	state state.State
 }
 
-func NewDriver(nodeID string) *Driver {
+func NewDriver(nodeID string) (*Driver, error) {
 
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		klog.Infof("Error creating cluster config: %s", err)
+	config, configErr := rest.InClusterConfig()
+	if configErr != nil {
+		klog.Infof("Error creating cluster config: %s", configErr)
+		return nil, configErr
 	}
 
-	restClient, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		klog.Infof("Error creating rest client: %s", err)
+	restClient, restErr := kubernetes.NewForConfig(config)
+	if restErr != nil {
+		klog.Infof("Error creating rest client: %s", restErr)
+		return nil, restErr
+	}
+
+	if stateDirErr := os.MkdirAll(driverStateDir, 0750); os.IsExist(stateDirErr) {
+		klog.Infof("Error creating state directory: %s", stateDirErr)
+		return nil, stateDirErr
+	}
+
+	smbState, stateErr := state.New(path.Join(driverStateDir, "state.json"))
+	if stateErr != nil {
+		klog.Infof("Error creating smb state class: %s", stateErr)
+		return nil, stateErr
 	}
 
 	return &Driver{
 		name:	  driverName,
 		version:  driverVersion,
 		nodeID:   nodeID,
-		server:   nil,
 		restClient: restClient,
-	}
+		state: smbState,
+	}, nil
 }
 
 func (d *Driver) Run(endpoint string) error {

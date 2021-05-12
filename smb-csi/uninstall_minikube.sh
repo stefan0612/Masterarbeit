@@ -25,7 +25,7 @@ kubectl delete -f deploy/node-server.yml
 kubectl delete -f deploy/test/server/smb-server.yml
 
 # Deleting Cluster Configurations
-kubectl delete -f deploy/driverConfig/smb-driver.yml
+#kubectl delete -f deploy/driverConfig/smb-driver.yml
 kubectl delete -f deploy/rbac-controller-server.yml
 kubectl delete -f deploy/secret/smb-secret.yml
 

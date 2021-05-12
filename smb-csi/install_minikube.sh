@@ -21,7 +21,7 @@ make clean
 
 # Creating Cluster Configurations
 kubectl apply -f deploy/rbac-controller-server.yml
-kubectl apply -f deploy/driverConfig/smb-driver.yml
+#kubectl apply -f deploy/driverConfig/smb-driver.yml
 kubectl apply -f deploy/secret/smb-secret.yml
 
 # Creating Servers (Depends on Cluster Configs, thus must be created after Cluster Configs)
