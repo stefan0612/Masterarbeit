@@ -27,7 +27,7 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 	vol, err := d.state.GetVolumeByName(requestName)
 	if err == nil {
 		if vol.VolSize < requestCapacity {
-			return nil, status.Error(codes.AlreadyExists, "PV with same name and lower size than requested already exists")
+			return nil, status.Error(codes.AlreadyExists, "Requested PV does already exist, but is to small for the request")
 		} else {
 			klog.Infof("Volume already exists")
 			return &csi.CreateVolumeResponse{
