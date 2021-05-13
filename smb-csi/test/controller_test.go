@@ -3,13 +3,9 @@ package test
 import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/stretchr/testify/assert"
-	"smb-csi/driver/mock"
 	"testing"
 )
-import "context"
 
-var ctx = context.Background()
-var d, _ = mock.NewMockDriver("test")
 const testVolName = "testName4"
 
 func TestCreateVolume(t *testing.T) {

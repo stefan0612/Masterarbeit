@@ -86,7 +86,7 @@ func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequ
 		return nil, status.Error(codes.FailedPrecondition, "PV Cannot be deleted while in use")
 	}
 
-	if removeDirErr := os.RemoveAll(path); removeDirErr != nil && os.IsNotExist(removeDirErr) {
+	if removeDirErr := os.RemoveAll(path); removeDirErr != nil && removeDirErr == nil {
 		return nil, status.Error(codes.Internal, removeDirErr.Error())
 	}
 
