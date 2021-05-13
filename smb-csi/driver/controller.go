@@ -9,6 +9,7 @@ import (
 	"k8s.io/klog/v2"
 	"os"
 	"path/filepath"
+	"smb-csi/driver/healtchCheck"
 	"smb-csi/driver/state"
 	"sort"
 	"strconv"
@@ -221,7 +222,7 @@ func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesReques
 	for index := startingIndex - 1; index < volumeLength && index < startingIndex + maxEntries - 1; index++ {
 
 		vol := vols[index]
-		healthy, reason := healthCheck(vol)
+		healthy, reason := healtchCheck.HealthCheck(vol)
 
 		entries = append(entries, &csi.ListVolumesResponse_Entry{
 			Volume: &csi.Volume{

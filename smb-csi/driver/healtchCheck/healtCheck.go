@@ -1,4 +1,4 @@
-package driver
+package healtchCheck
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"smb-csi/driver/state"
 )
 
-func healthCheck(vol state.Volume) (bool, string) {
+func HealthCheck(vol state.Volume) (bool, string) {
 
 	spExist, err := checkPathExist(vol.VolPath)
 	if err != nil {
