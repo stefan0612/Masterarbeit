@@ -24,7 +24,7 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 	if requestName == "" { return nil, status.Error(codes.InvalidArgument, "No VolumeID specified") }
 	if len(requestParameters) == 0  {return nil, status.Error(codes.InvalidArgument, "PV should contain at least the source attribute")}
 
-	vol, err := d.state.GetVolumeByName(requestName)
+	vol, err := d.State.GetVolumeByName(requestName)
 	if err == nil {
 		if vol.VolSize < requestCapacity {
 			return nil, status.Error(codes.AlreadyExists, "Requested PV does already exist, but is to small for the request")
@@ -42,7 +42,7 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 	}
 
 	volumeID := string(uuid.NewUUID())
-	path := filepath.Join(driverStateDir, volumeID)
+	path := filepath.Join(d.StateDir, volumeID)
 	if mountErr := os.MkdirAll(path, 0777); mountErr != nil {
 		klog.Infof("Failed create state dir %s", mountErr.Error())
 		return nil, status.Error(codes.Internal, "Failed creating local PV")
@@ -53,12 +53,12 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 		VolID: volumeID,
 		VolName: requestName,
 		VolSize: requestCapacity,
-		VolPath: filepath.Join(driverStateDir, volumeID),
+		VolPath: filepath.Join(d.StateDir, volumeID),
 		VolAccessType: state.MountAccess,
 		Ephemeral: false,
 	}
 
-	if updateErr := d.state.UpdateVolume(newVol); updateErr != nil {
+	if updateErr := d.State.UpdateVolume(newVol); updateErr != nil {
 		return nil, status.Error(codes.Internal, updateErr.Error())
 	}
 
@@ -75,9 +75,9 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 
 	requestID := request.GetVolumeId()
-	path := filepath.Join(driverStateDir, requestID)
+	path := filepath.Join(d.StateDir, requestID)
 
-	vol, err := d.state.GetVolumeByID(requestID)
+	vol, err := d.State.GetVolumeByID(requestID)
 	if err != nil {
 		return &csi.DeleteVolumeResponse{}, nil
 	}
@@ -89,7 +89,7 @@ func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequ
 		return nil, status.Error(codes.Internal, removeDirErr.Error())
 	}
 
-	if deleteVolErr := d.state.DeleteVolume(requestID); deleteVolErr != nil {
+	if deleteVolErr := d.State.DeleteVolume(requestID); deleteVolErr != nil {
 		return nil, status.Error(codes.Internal, deleteVolErr.Error())
 	}
 
@@ -98,7 +98,7 @@ func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequ
 
 func (d *Driver) ControllerPublishVolume(ctx context.Context, request *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 
-	vol, err := d.state.GetVolumeByID(request.GetVolumeId())
+	vol, err := d.State.GetVolumeByID(request.GetVolumeId())
 	if err != nil {
 		return nil, status.Error(codes.Internal, "Failed Getting Volume by ID")
 	}
@@ -111,7 +111,7 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, request *csi.Contr
 	vol.NodeID = nodeID
 	vol.IsAttached = true
 
-	if updateErr := d.state.UpdateVolume(vol); updateErr != nil {
+	if updateErr := d.State.UpdateVolume(vol); updateErr != nil {
 		return nil, status.Error(codes.Internal, "Failed updating Volume State")
 	}
 
@@ -121,7 +121,7 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, request *csi.Contr
 
 func (d *Driver) ControllerUnpublishVolume(ctx context.Context, request *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
 
-	vol, err := d.state.GetVolumeByID(request.GetVolumeId())
+	vol, err := d.State.GetVolumeByID(request.GetVolumeId())
 	if err != nil {
 		return &csi.ControllerUnpublishVolumeResponse{}, nil
 	}
@@ -129,7 +129,7 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, request *csi.Con
 	vol.NodeID = ""
 	vol.IsAttached = false
 
-	if updateErr := d.state.UpdateVolume(vol); updateErr != nil {
+	if updateErr := d.State.UpdateVolume(vol); updateErr != nil {
 		return nil, status.Error(codes.Internal, "Failed updating Volume State")
 	}
 
@@ -194,14 +194,15 @@ func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesReques
 	var entries []*csi.ListVolumesResponse_Entry
 	nextToken := ""
 
-	vols := d.state.GetVolumes()
+	vols := d.State.GetVolumes()
 	volumeLength := len(vols)
 	sort.Slice(vols, func(i, j int) bool {
 		return vols[i].VolID < vols[j].VolID
 	})
 
 	maxEntries := int(request.GetMaxEntries())
-	if maxEntries < 1 { maxEntries = volumeLength }
+	if maxEntries == 0 { maxEntries = volumeLength }
+	if maxEntries < 0 { return nil, status.Error(codes.InvalidArgument, "Max Entries must not be negative or zero") }
 
 	startingToken := request.GetStartingToken()
 	if startingToken == "" { startingToken = "1" }
@@ -237,7 +238,7 @@ func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesReques
 		})
 	}
 
-	if startingIndex + maxEntries < volumeLength { nextToken = strconv.Itoa(startingIndex + maxEntries)}
+	if startingIndex + maxEntries <= volumeLength { nextToken = strconv.Itoa(startingIndex + maxEntries)}
 
 	return &csi.ListVolumesResponse{
 		Entries: entries,

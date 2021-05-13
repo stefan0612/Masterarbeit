@@ -211,7 +211,7 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, request *csi.NodeGetCa
 func (d *Driver) NodeGetInfo(ctx context.Context, request *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 
 	resp := &csi.NodeGetInfoResponse{
-		NodeId: d.nodeID,
+		NodeId: d.NodeID,
 	}
 
 	return resp, nil

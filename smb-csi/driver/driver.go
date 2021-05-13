@@ -5,8 +5,6 @@ import (
 	"fmt"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	"net"
 	"net/url"
@@ -23,27 +21,15 @@ const (
 )
 
 type Driver struct {
-	name 	 string
-	version  string
-	nodeID   string
-	server   *grpc.Server
-	restClient *kubernetes.Clientset
-	state state.State
+	Name       string
+	Version    string
+	NodeID     string
+	StateDir  string
+	server     *grpc.Server
+	State      state.State
 }
 
 func NewDriver(nodeID string) (*Driver, error) {
-
-	config, configErr := rest.InClusterConfig()
-	if configErr != nil {
-		klog.Infof("Error creating cluster config: %s", configErr)
-		return nil, configErr
-	}
-
-	restClient, restErr := kubernetes.NewForConfig(config)
-	if restErr != nil {
-		klog.Infof("Error creating rest client: %s", restErr)
-		return nil, restErr
-	}
 
 	if stateDirErr := os.MkdirAll(driverStateDir, 0750); os.IsExist(stateDirErr) {
 		klog.Infof("Error creating state directory: %s", stateDirErr)
@@ -57,11 +43,11 @@ func NewDriver(nodeID string) (*Driver, error) {
 	}
 
 	return &Driver{
-		name:	  driverName,
-		version:  driverVersion,
-		nodeID:   nodeID,
-		restClient: restClient,
-		state: smbState,
+		Name:    driverName,
+		Version: driverVersion,
+		StateDir: driverStateDir,
+		NodeID:  nodeID,
+		State:   smbState,
 	}, nil
 }
 

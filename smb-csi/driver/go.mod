@@ -6,6 +6,7 @@ replace smb-csi/driver/state => ./state
 
 require (
 	github.com/container-storage-interface/spec v1.4.0
+	github.com/stretchr/testify v1.5.1
 	golang.org/x/sys v0.0.0-20190826190057-c7b8b68b1456
 	google.golang.org/grpc v1.37.1
 	google.golang.org/protobuf v1.26.0
