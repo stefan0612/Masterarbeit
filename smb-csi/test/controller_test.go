@@ -10,10 +10,11 @@ import "context"
 
 var ctx = context.Background()
 var d, _ = mock.NewMockDriver("test")
+const testVolName = "testName4"
 
 func TestCreateVolume(t *testing.T) {
 	req := csi.CreateVolumeRequest{
-		Name: "testName4",
+		Name: testVolName,
 		Parameters: map[string]string{"source": "/test"},
 	}
 	resp, err := d.CreateVolume(ctx, &req)
@@ -21,8 +22,29 @@ func TestCreateVolume(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
+func TestPublishVolume(t *testing.T) {
+	vol, _ := d.State.GetVolumeByName(testVolName)
+	req := csi.ControllerPublishVolumeRequest{
+		NodeId: "test",
+		VolumeId: vol.VolID,
+	}
+	resp, err := d.ControllerPublishVolume(ctx, &req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+}
+
+func TestUnpublishVolume(t *testing.T) {
+	vol, _ := d.State.GetVolumeByName(testVolName)
+	req := csi.ControllerUnpublishVolumeRequest{
+		VolumeId: vol.VolID,
+	}
+	resp, err := d.ControllerUnpublishVolume(ctx, &req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+}
+
 func TestDeleteVolume(t *testing.T) {
-	vol, _ := d.State.GetVolumeByName("testName4")
+	vol, _ := d.State.GetVolumeByName(testVolName)
 	req := csi.DeleteVolumeRequest{
 		VolumeId: vol.VolID,
 	}
@@ -85,6 +107,22 @@ func TestListVolumes_Pagination(t *testing.T) {
 	assert.NoError(t, err2)
 	assert.NotNil(t, resp2)
 	assert.Equal(t, len(resp2.Entries), len(d.State.GetVolumes()) - 2)
+}
+
+func TestValidateVolumeCapabilities(t *testing.T) {
+	req := csi.ValidateVolumeCapabilitiesRequest{
+		VolumeCapabilities: []*csi.VolumeCapability{
+			{
+				AccessMode: &csi.VolumeCapability_AccessMode{
+					Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+				},
+			},
+		},
+	}
+	resp, err := d.ValidateVolumeCapabilities(ctx, &req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Empty(t, resp.Message)
 }
 
 
