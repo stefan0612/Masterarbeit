@@ -19,11 +19,12 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	targetPath := request.GetStagingTargetPath()
 	volumeContext := request.GetVolumeContext()
 	secrets := request.GetSecrets()
+	mountFlags := request.GetVolumeCapability().GetMount().GetMountFlags()
 
 	//Check if the target path exist, else create it
-	if _, statErr := os.Stat(targetPath); statErr == nil {
+	if _, statErr := os.Stat(targetPath); statErr != nil {
 		if createDirErr := os.Mkdir(targetPath, os.ModeDir); createDirErr != nil {
-			return nil, status.Error(codes.Internal,"Failed creating mount directory")
+			return nil, status.Errorf(codes.Internal,"Failed creating mount directory: %s", createDirErr.Error())
 		}
 	}
 
@@ -50,6 +51,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	mountOptions = append(mountOptions, fmt.Sprintf("username=%s", username))
 	mountOptions = append(mountOptions, fmt.Sprintf("password=%s", password))
 	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
+	mountOptions = append(mountOptions, mountFlags...)
 
 	// Build string from mountOptions array, separated by ","
 	mountOptionsString := strings.Join(mountOptions, ",")
@@ -70,7 +72,8 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstage
 
 	targetPath := request.GetStagingTargetPath()
 	if _, statErr := os.Stat(targetPath); statErr != nil {
-		return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")
+		//return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")
+		return &csi.NodeUnstageVolumeResponse{}, nil
 	}
 
 	if unmountErr := unix.Unmount(targetPath, 0); unmountErr != nil {
@@ -95,7 +98,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublish
 	}
 
 	//Check if the target path exist, else create it
-	if _, statTargetErr := os.Stat(targetPath); statTargetErr == nil {
+	if _, statTargetErr := os.Stat(targetPath); statTargetErr != nil {
 		if createDirErr := os.Mkdir(targetPath, os.ModeDir); createDirErr != nil {
 			return nil, status.Error(codes.Internal,"Failed creating mount directory")
 		}
@@ -117,7 +120,8 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpub
 
 	targetPath := request.GetTargetPath()
 	if _, statErr := os.Stat(targetPath); statErr != nil {
-		return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")
+		return &csi.NodeUnpublishVolumeResponse{}, nil
+		//return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")
 	}
 
 	if unmountErr := unix.Unmount(targetPath, 0); unmountErr != nil {

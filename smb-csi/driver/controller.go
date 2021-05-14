@@ -48,7 +48,6 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 		klog.Infof("Failed create state dir %s", mountErr.Error())
 		return nil, status.Error(codes.Internal, "Failed creating local PV")
 	}
-	klog.Info("Created state dir")
 
 	newVol := state.Volume{
 		VolID: volumeID,
