@@ -9,7 +9,9 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -20,6 +22,8 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	volumeContext := request.GetVolumeContext()
 	secrets := request.GetSecrets()
 	mountFlags := request.GetVolumeCapability().GetMount().GetMountFlags()
+
+	klog.Infof("TargetStagePath: %s", targetPath)
 
 	//Check if the target path exist, else create it
 	if _, statErr := os.Stat(targetPath); statErr != nil {
@@ -32,6 +36,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	source, isSourcePresent := volumeContext["source"]
 	if !isSourcePresent {
 		return nil, status.Error(codes.InvalidArgument,"No smb-share source is present")
+	}
+
+	createSubDir, parseBoolErr := strconv.ParseBool(volumeContext["createSubDir"])
+	if parseBoolErr != nil {
+		createSubDir = false
 	}
 
 	// Check if  username (optional) is present, else log that no username was provided
@@ -65,6 +74,14 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 		return nil, status.Error(codes.Internal,"Failed mounting directory")
 	}
 
+	if createSubDir {
+		klog.Infof("Creating Sub Directory")
+		klog.Infof("Subdir Staging Path: %s", path.Join(targetPath, request.GetVolumeId()))
+		if createDirErr := os.Mkdir(path.Join(targetPath, request.GetVolumeId()), os.ModeDir); createDirErr != nil {
+			return nil, status.Errorf(codes.Internal,"Failed creating mount directory: %s", createDirErr.Error())
+		}
+	}
+
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
@@ -91,6 +108,16 @@ func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublish
 
 	stagingPath := request.GetStagingTargetPath()
 	targetPath := request.GetTargetPath()
+	volumeContext := request.GetVolumeContext()
+
+	klog.Infof("StagingPath: %s", stagingPath)
+	klog.Infof("TargetPath: %s", targetPath)
+
+	if createSubDir, _ := strconv.ParseBool(volumeContext["createSubDir"]); createSubDir {
+		stagingPath = path.Join(stagingPath, request.GetVolumeId())
+		klog.Infof("SubDir stagingPath: %s", stagingPath)
+		klog.Infof("SubDir targetPath: %s", targetPath)
+	}
 
 	//Check if the source path exist
 	if _, statSourceErr := os.Stat(stagingPath); statSourceErr != nil {

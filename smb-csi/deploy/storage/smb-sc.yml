@@ -7,7 +7,7 @@ parameters:
   source: "//10.96.0.149/share"
   csi.storage.k8s.io/node-stage-secret-name: "my-secret"
   csi.storage.k8s.io/node-stage-secret-namespace: "default"
-  createSubDir: "false"
+  createSubDir: "true"
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
 mountOptions:
