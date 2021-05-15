@@ -88,6 +88,10 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 func (d *Driver) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 
 	targetPath := request.GetStagingTargetPath()
+	if targetPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "Empty Target Path")
+	}
+
 	if _, statErr := os.Stat(targetPath); statErr != nil {
 		//return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")
 		return &csi.NodeUnstageVolumeResponse{}, nil
@@ -146,6 +150,10 @@ func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublish
 func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 
 	targetPath := request.GetTargetPath()
+	if targetPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "Empty Target Path")
+	}
+
 	if _, statErr := os.Stat(targetPath); statErr != nil {
 		return &csi.NodeUnpublishVolumeResponse{}, nil
 		//return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")

@@ -5,11 +5,13 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/klog/v2"
 	"os"
 	"path/filepath"
 	"smb-csi/driver/healtchCheck"
+	"smb-csi/driver/snapshotter"
 	"smb-csi/driver/state"
 	"sort"
 	"strconv"
@@ -278,11 +280,68 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 }
 
 func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
-	panic("implement me")
+	requestVolID := request.GetSourceVolumeId()
+	requestName := request.GetName()
+	volume, err := d.State.GetVolumeByID(requestVolID)
+	if err != nil { return nil, err}
+
+	// Return existing Snapshot if present
+	if existingSnap, err := d.State.GetSnapshotByName(requestName); err == nil {
+		if existingSnap.VolID == requestVolID {
+			return &csi.CreateSnapshotResponse{
+				Snapshot: &csi.Snapshot{
+					SnapshotId: existingSnap.Id,
+					SourceVolumeId: existingSnap.VolID,
+					CreationTime: existingSnap.CreationTime,
+					SizeBytes: existingSnap.SizeBytes,
+					ReadyToUse: existingSnap.ReadyToUse,
+				},
+			}, nil
+		}
+	}
+
+	snapshotID := string(uuid.NewUUID())
+	createdTime := timestamppb.Now()
+	snapFile := filepath.Join(d.StateDir, snapshotID)
+	if err := snapshotter.CreateSnapshot(volume.VolPath, snapFile); err != nil {
+		return nil, err
+	}
+
+	snapshot := state.Snapshot{
+		Name: requestName,
+		Id: snapshotID,
+		VolID: volume.VolID,
+		Path: snapFile,
+		CreationTime: createdTime,
+		SizeBytes: volume.VolSize,
+		ReadyToUse: true,
+	}
+
+	if err := d.State.UpdateSnapshot(snapshot); err != nil {
+		return nil, err
+	}
+
+	return &csi.CreateSnapshotResponse{
+		Snapshot: &csi.Snapshot{
+			SnapshotId: snapshot.Id,
+			SourceVolumeId: snapshot.VolID,
+			CreationTime: snapshot.CreationTime,
+			SizeBytes: snapshot.SizeBytes,
+			ReadyToUse: snapshot.ReadyToUse,
+		},
+	}, nil
 }
 
 func (d *Driver) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
-	panic("implement me")
+	requestSnapID := request.GetSnapshotId()
+
+	snap, err := d.State.GetSnapshotByID(requestSnapID)
+	if err != nil { return nil, err }
+
+	if err := d.State.DeleteSnapshot(snap.Id); err != nil { return nil, err }
+	if err := snapshotter.DeleteSnapshot(snap.Path); err != nil { return nil, err }
+
+	return &csi.DeleteSnapshotResponse{}, nil
 }
 
 func (d *Driver) ListSnapshots(ctx context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
