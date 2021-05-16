@@ -13,7 +13,7 @@ then
   fi
 fi
 
-
+kubectl delete -f deploy/test/snapshot/smb-snapshot.yml
 # Deleting Client Chain (Depends on Servers, thus must be delete before Servers)
 kubectl delete -f deploy/test/client/smb-client.yml
 kubectl delete -f deploy/storage/smb-pvc.yml

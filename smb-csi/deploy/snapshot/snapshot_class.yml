@@ -1,0 +1,9 @@
+apiVersion: snapshot.storage.k8s.io/v1beta1
+kind: VolumeSnapshotClass
+metadata:
+  name: smb-snapclass
+driver: seitenbau.csi.smb
+deletionPolicy: Delete
+parameters:
+  csi.storage.k8s.io/snapshotter-secret-name: "my-secret"
+  csi.storage.k8s.io/snapshotter-secret-namespace: "default"

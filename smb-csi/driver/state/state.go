@@ -37,6 +37,7 @@ type Volume struct {
 	VolName        string
 	VolID          string
 	VolSize        int64
+	VolSource	   string
 	VolPath        string
 	VolAccessType  AccessType
 	ParentVolID    string

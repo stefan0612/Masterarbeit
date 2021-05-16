@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"fmt"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"smb-csi/driver/healtchCheck"
+	"smb-csi/driver/mounter"
 	"smb-csi/driver/snapshotter"
 	"smb-csi/driver/state"
 	"sort"
@@ -100,18 +102,37 @@ func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequ
 
 func (d *Driver) ControllerPublishVolume(ctx context.Context, request *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 
-	vol, err := d.State.GetVolumeByID(request.GetVolumeId())
-	if err != nil {
-		return nil, status.Error(codes.Internal, "Failed Getting Volume by ID")
-	}
-
+	volId := request.GetVolumeId()
+	volumeContext := request.GetVolumeContext()
+	source, _ := volumeContext["source"]
 	nodeID := request.GetNodeId()
 	if nodeID == "" {
 		return nil, status.Error(codes.InvalidArgument, "NodeID missing")
 	}
 
+	vol, err := d.State.GetVolumeByID(volId)
+	if err != nil {
+		// Volume was statically/externally provisioned and is not in the storage, thus creating it
+		newVol := state.Volume{
+			VolID: volId,
+			VolPath: filepath.Join(d.StateDir, volId),
+			VolSource: source,
+			VolAccessType: state.MountAccess,
+			Ephemeral: false,
+			NodeID: request.NodeId,
+			IsAttached: true,
+		}
+
+		err := d.State.UpdateVolume(newVol)
+		if err != nil {
+			return nil, err
+		}
+		return &csi.ControllerPublishVolumeResponse{}, nil
+	}
+
 	vol.NodeID = nodeID
 	vol.IsAttached = true
+	vol.VolSource = source
 
 	if updateErr := d.State.UpdateVolume(vol); updateErr != nil {
 		return nil, status.Error(codes.Internal, "Failed updating Volume State")
@@ -255,9 +276,10 @@ func (d *Driver) GetCapacity(ctx context.Context, request *csi.GetCapacityReques
 func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 
 	capabilities := []csi.ControllerServiceCapability_RPC_Type {
+		csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
-		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 		csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
+		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 		csi.ControllerServiceCapability_RPC_VOLUME_CONDITION,
 	}
 
@@ -285,6 +307,12 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 	volume, err := d.State.GetVolumeByID(requestVolID)
 	if err != nil { return nil, err}
 
+	snapvolumePath := volume.VolPath
+
+	secrets := request.GetSecrets()
+	username, _ := secrets["username"]
+	password, _ := secrets["password"]
+
 	// Return existing Snapshot if present
 	if existingSnap, err := d.State.GetSnapshotByName(requestName); err == nil {
 		if existingSnap.VolID == requestVolID {
@@ -300,10 +328,24 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 		}
 	}
 
+	var mountOptions []string
+	mountOptions = append(mountOptions, fmt.Sprintf("username=%s", username))
+	mountOptions = append(mountOptions, fmt.Sprintf("password=%s", password))
+	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
+	// mountOptions = append(mountOptions, mountFlags...)
+	if err := mounter.Mount(volume.VolSource, volume.VolPath, mountOptions); err != nil {
+		return nil, status.Error(codes.Internal, "Failed temporarily mounting storage for taking snapshot")
+	}
+	if _, err := os.Stat(filepath.Join(volume.VolPath, volume.VolID)); err != nil {
+		klog.Info(err)
+	} else {
+		snapvolumePath = filepath.Join(volume.VolPath, volume.VolID)
+	}
+
 	snapshotID := string(uuid.NewUUID())
 	createdTime := timestamppb.Now()
-	snapFile := filepath.Join(d.StateDir, snapshotID)
-	if err := snapshotter.CreateSnapshot(volume.VolPath, snapFile); err != nil {
+	snapFile := filepath.Join(d.StateDir, snapshotID) + ".snap"
+	if err := snapshotter.CreateSnapshot(snapvolumePath, snapFile); err != nil {
 		return nil, err
 	}
 
@@ -318,6 +360,11 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 	}
 
 	if err := d.State.UpdateSnapshot(snapshot); err != nil {
+		return nil, err
+	}
+
+	if err := mounter.Unmount(volume.VolPath); err != nil {
+		klog.Infof("Unomunt err: %s", err)
 		return nil, err
 	}
 
@@ -336,10 +383,10 @@ func (d *Driver) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshot
 	requestSnapID := request.GetSnapshotId()
 
 	snap, err := d.State.GetSnapshotByID(requestSnapID)
-	if err != nil { return nil, err }
+	if err != nil { return &csi.DeleteSnapshotResponse{}, nil }
 
-	if err := d.State.DeleteSnapshot(snap.Id); err != nil { return nil, err }
-	if err := snapshotter.DeleteSnapshot(snap.Path); err != nil { return nil, err }
+	if err := d.State.DeleteSnapshot(snap.Id); err != nil { return &csi.DeleteSnapshotResponse{}, nil }
+	if err := snapshotter.DeleteSnapshot(snap.Path); err != nil { return &csi.DeleteSnapshotResponse{}, nil }
 
 	return &csi.DeleteSnapshotResponse{}, nil
 }

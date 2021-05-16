@@ -11,8 +11,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"smb-csi/driver/mounter"
 	"strconv"
-	"strings"
 )
 
 func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
@@ -22,15 +22,6 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	volumeContext := request.GetVolumeContext()
 	secrets := request.GetSecrets()
 	mountFlags := request.GetVolumeCapability().GetMount().GetMountFlags()
-
-	klog.Infof("TargetStagePath: %s", targetPath)
-
-	//Check if the target path exist, else create it
-	if _, statErr := os.Stat(targetPath); statErr != nil {
-		if createDirErr := os.Mkdir(targetPath, os.ModeDir); createDirErr != nil {
-			return nil, status.Errorf(codes.Internal,"Failed creating mount directory: %s", createDirErr.Error())
-		}
-	}
 
 	// Check if source path is present
 	source, isSourcePresent := volumeContext["source"]
@@ -62,22 +53,13 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
 	mountOptions = append(mountOptions, mountFlags...)
 
-	// Build string from mountOptions array, separated by ","
-	mountOptionsString := strings.Join(mountOptions, ",")
-
-	// Try to mount directory, else try to remove the created mounting-point directory and return error
-	if mountErr := unix.Mount(source, targetPath, "cifs", 0, mountOptionsString); mountErr != nil {
-		klog.Errorf("Error while mounting: %s", mountErr)
-		if deleteDirErr := os.RemoveAll(targetPath); deleteDirErr != nil {
-			return nil, status.Error(codes.Internal,"Failed cleanup after mounting failed")
-		}
-		return nil, status.Error(codes.Internal,"Failed mounting directory")
+	if err := mounter.Mount(source, targetPath, mountOptions); err != nil {
+		klog.Infof("Failed: %s", err.Error())
+		return nil, err
 	}
 
 	if createSubDir {
-		klog.Infof("Creating Sub Directory")
-		klog.Infof("Subdir Staging Path: %s", path.Join(targetPath, request.GetVolumeId()))
-		if createDirErr := os.Mkdir(path.Join(targetPath, request.GetVolumeId()), os.ModeDir); createDirErr != nil {
+		if createDirErr := os.MkdirAll(path.Join(targetPath, request.GetVolumeId()), os.ModeDir); createDirErr != nil {
 			return nil, status.Errorf(codes.Internal,"Failed creating mount directory: %s", createDirErr.Error())
 		}
 	}
@@ -92,13 +74,8 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstage
 		return nil, status.Error(codes.InvalidArgument, "Empty Target Path")
 	}
 
-	if _, statErr := os.Stat(targetPath); statErr != nil {
-		//return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")
-		return &csi.NodeUnstageVolumeResponse{}, nil
-	}
-
-	if unmountErr := unix.Unmount(targetPath, 0); unmountErr != nil {
-		return nil, status.Error(codes.Internal,"Failed unmounting directory")
+	if err := mounter.Unmount(targetPath); err != nil {
+		return nil, err
 	}
 
 	if deleteDirErr := os.RemoveAll(targetPath); deleteDirErr != nil {
@@ -114,34 +91,12 @@ func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublish
 	targetPath := request.GetTargetPath()
 	volumeContext := request.GetVolumeContext()
 
-	klog.Infof("StagingPath: %s", stagingPath)
-	klog.Infof("TargetPath: %s", targetPath)
-
 	if createSubDir, _ := strconv.ParseBool(volumeContext["createSubDir"]); createSubDir {
 		stagingPath = path.Join(stagingPath, request.GetVolumeId())
-		klog.Infof("SubDir stagingPath: %s", stagingPath)
-		klog.Infof("SubDir targetPath: %s", targetPath)
 	}
 
-	//Check if the source path exist
-	if _, statSourceErr := os.Stat(stagingPath); statSourceErr != nil {
-		return nil, status.Error(codes.InvalidArgument,"Staging path does not exist")
-	}
-
-	//Check if the target path exist, else create it
-	if _, statTargetErr := os.Stat(targetPath); statTargetErr != nil {
-		if createDirErr := os.Mkdir(targetPath, os.ModeDir); createDirErr != nil {
-			return nil, status.Error(codes.Internal,"Failed creating mount directory")
-		}
-	}
-
-	// Try to mount directory, else try to remove the created mounting-point directory and return error
-	if mountErr := unix.Mount(stagingPath, targetPath, "bind", unix.MS_BIND, ""); mountErr != nil {
-		klog.Errorf("Error while mounting: %s", mountErr)
-		if deleteDirErr := os.RemoveAll(targetPath); deleteDirErr == nil {
-			return nil, status.Error(codes.Internal,"Failed cleanup after mounting failed")
-		}
-		return nil, status.Error(codes.Internal,"Failed mounting directory")
+	if err := mounter.BindMount(stagingPath, targetPath); err != nil {
+		return nil, err
 	}
 
 	return &csi.NodePublishVolumeResponse{}, nil
@@ -154,13 +109,8 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpub
 		return nil, status.Error(codes.InvalidArgument, "Empty Target Path")
 	}
 
-	if _, statErr := os.Stat(targetPath); statErr != nil {
-		return &csi.NodeUnpublishVolumeResponse{}, nil
-		//return nil, status.Error(codes.InvalidArgument,"Specified target directory does not exist")
-	}
-
-	if unmountErr := unix.Unmount(targetPath, 0); unmountErr != nil {
-		return nil, status.Error(codes.Internal,"Failed unmounting directory")
+	if err := mounter.Unmount(targetPath); err != nil {
+		return nil, err
 	}
 
 	if deleteDirErr := os.RemoveAll(targetPath); deleteDirErr != nil {

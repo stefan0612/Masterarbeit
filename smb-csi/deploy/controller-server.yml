@@ -82,6 +82,18 @@ spec:
             initialDelaySeconds: 10
             timeoutSeconds: 10
             periodSeconds: 20
+
+        - name: external-snapshotter
+          image: k8s.gcr.io/sig-storage/csi-snapshotter:v4.1.0
+          args:
+            - --v=5
+            - --csi-address=/csi/csi.sock
+            - --leader-election=false
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /csi
+              name: driversocket
+
       volumes:
         - name: driversocket
           emptyDir: {}

@@ -7,10 +7,13 @@ then
   if minikube start;
   then
     echo "\e[92mMinikube started successfully\e[0m"
+    minikube addons enable volumesnapshots
   else
     echo "\e[91mMinikube cannot be started\e[0m"
     exit 1
   fi
+else
+  minikube addons enable volumesnapshots
 fi
 
 # Build driver-docker-image and deploy it to minikube
@@ -33,3 +36,4 @@ kubectl apply -f deploy/controller-server.yml
 kubectl apply -f deploy/storage/smb-sc.yml
 kubectl apply -f deploy/storage/smb-pvc.yml
 kubectl apply -f deploy/test/client/smb-client.yml
+#kubectl apply -f deploy/test/snapshot/smb-snapshot.yml
