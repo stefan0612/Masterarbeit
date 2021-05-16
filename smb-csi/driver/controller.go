@@ -278,6 +278,7 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 	capabilities := []csi.ControllerServiceCapability_RPC_Type {
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+		csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS,
 		csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 		csi.ControllerServiceCapability_RPC_VOLUME_CONDITION,
@@ -392,7 +393,55 @@ func (d *Driver) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshot
 }
 
 func (d *Driver) ListSnapshots(ctx context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
-	panic("implement me")
+
+	var entries []*csi.ListSnapshotsResponse_Entry
+	nextToken := ""
+
+	snapshots := d.State.GetSnapshots()
+	snapLength := len(snapshots)
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].Id < snapshots[j].Id
+	})
+
+	maxEntries := int(request.GetMaxEntries())
+	if maxEntries == 0 { maxEntries = snapLength }
+	if maxEntries < 0 { return nil, status.Error(codes.InvalidArgument, "Max Entries must not be negative or zero") }
+
+	startingToken := request.GetStartingToken()
+	if startingToken == "" { startingToken = "1" }
+
+	startingIndex, parseErr := strconv.Atoi(startingToken)
+	if parseErr != nil {
+		return nil, status.Error(codes.InvalidArgument, "StartingToken must be a number")
+	}
+	if startingIndex > snapLength {
+		return &csi.ListSnapshotsResponse{}, nil
+	}
+	if startingIndex < 1 {
+		startingIndex = 1
+	}
+
+	for index := startingIndex - 1; index < snapLength && index < startingIndex + maxEntries - 1; index++ {
+
+		snap := snapshots[index]
+
+		entries = append(entries, &csi.ListSnapshotsResponse_Entry{
+			Snapshot: &csi.Snapshot{
+				SnapshotId: snap.Id,
+				SizeBytes: snap.SizeBytes,
+				SourceVolumeId: snap.VolID,
+				CreationTime: snap.CreationTime,
+				ReadyToUse: snap.ReadyToUse,
+			},
+		})
+	}
+
+	if startingIndex + maxEntries <= snapLength { nextToken = strconv.Itoa(startingIndex + maxEntries)}
+
+	return &csi.ListSnapshotsResponse{
+		Entries: entries,
+		NextToken: nextToken,
+	}, nil
 }
 
 func (d *Driver) ControllerExpandVolume(ctx context.Context, request *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {

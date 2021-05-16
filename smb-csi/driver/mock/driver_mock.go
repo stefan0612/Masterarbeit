@@ -35,6 +35,24 @@ var vol3 = state.Volume{
 	VolPath: filepath.Join(driverStateDir, "testID3"),
 }
 
+var snap1 = state.Snapshot{
+	Id: "snapID",
+	Name: "snapName",
+	VolID: "testID",
+}
+
+var snap2 = state.Snapshot{
+	Id: "snapID2",
+	Name: "snapName2",
+	VolID: "testID2",
+}
+
+var snap3 = state.Snapshot{
+	Id: "snapID3",
+	Name: "snapName3",
+	VolID: "testID3",
+}
+
 func NewMockDriver(nodeID string) (*driver.Driver, error) {
 
 	if stateDirErr := os.MkdirAll(driverStateDir, 0750); os.IsExist(stateDirErr) {
@@ -49,6 +67,11 @@ func NewMockDriver(nodeID string) (*driver.Driver, error) {
 	smbState.UpdateVolume(vol1)
 	smbState.UpdateVolume(vol2)
 	smbState.UpdateVolume(vol3)
+
+	smbState.UpdateSnapshot(snap1)
+	smbState.UpdateSnapshot(snap2)
+	smbState.UpdateSnapshot(snap3)
+
 
 	return &driver.Driver{
 		Name:     driverName,

@@ -86,6 +86,15 @@ func TestListVolumes_VeryHighMaxEntries(t *testing.T) {
 	assert.Equal(t, len(resp.Entries), len(d.State.GetVolumes()))
 }
 
+func TestListSnapshots_All(t *testing.T) {
+	req := csi.ListSnapshotsRequest{}
+	println(len(d.State.GetSnapshots()))
+	resp, err := d.ListSnapshots(ctx, &req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, len(resp.Entries), len(d.State.GetSnapshots()))
+}
+
 func TestListVolumes_Pagination(t *testing.T) {
 	req := csi.ListVolumesRequest{
 		MaxEntries: 2,
@@ -103,6 +112,25 @@ func TestListVolumes_Pagination(t *testing.T) {
 	assert.NoError(t, err2)
 	assert.NotNil(t, resp2)
 	assert.Equal(t, len(resp2.Entries), len(d.State.GetVolumes()) - 2)
+}
+
+func TestListSnapshots_Pagination(t *testing.T) {
+	req := csi.ListSnapshotsRequest{
+		MaxEntries: 2,
+	}
+	resp, err := d.ListSnapshots(ctx, &req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.NotEmpty(t, resp.NextToken)
+	assert.Equal(t, len(resp.Entries), 2)
+
+	req2:= csi.ListSnapshotsRequest{
+		StartingToken: resp.NextToken,
+	}
+	resp2, err2 := d.ListSnapshots(ctx, &req2)
+	assert.NoError(t, err2)
+	assert.NotNil(t, resp2)
+	assert.Equal(t, len(resp2.Entries), len(d.State.GetSnapshots()) - 2)
 }
 
 func TestValidateVolumeCapabilities(t *testing.T) {
