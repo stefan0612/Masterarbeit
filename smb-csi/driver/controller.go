@@ -9,10 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/klog/v2"
-	"os"
 	"path/filepath"
 	"smb-csi/driver/healtchCheck"
-	"smb-csi/driver/mounter"
 	"smb-csi/driver/snapshotter"
 	"smb-csi/driver/state"
 	"sort"
@@ -27,7 +25,9 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 	requestParameters := request.GetParameters()
 
 	if requestName == "" { return nil, status.Error(codes.InvalidArgument, "No VolumeID specified") }
-	if len(requestParameters) == 0  {return nil, status.Error(codes.InvalidArgument, "PV should contain at least the source attribute")}
+	if len(requestParameters) == 0  {
+		return nil, status.Error(codes.InvalidArgument, "PV should contain at least the source attribute")
+	}
 
 	vol, err := d.State.GetVolumeByName(requestName)
 	if err == nil {
@@ -48,7 +48,7 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 
 	volumeID := string(uuid.NewUUID())
 	path := filepath.Join(d.StateDir, volumeID)
-	if mountErr := os.MkdirAll(path, 0777); mountErr != nil {
+	if mountErr := d.Mounter.CreateDir(path, 0777); mountErr != nil {
 		klog.Infof("Failed create state dir %s", mountErr.Error())
 		return nil, status.Error(codes.Internal, "Failed creating local PV")
 	}
@@ -89,7 +89,7 @@ func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequ
 		return nil, status.Error(codes.FailedPrecondition, "PV Cannot be deleted while in use")
 	}
 
-	if removeDirErr := os.RemoveAll(path); removeDirErr != nil && removeDirErr == nil {
+	if removeDirErr := d.Mounter.DeleteDir(path); removeDirErr != nil && removeDirErr == nil {
 		return nil, status.Error(codes.Internal, removeDirErr.Error())
 	}
 
@@ -334,12 +334,10 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 	mountOptions = append(mountOptions, fmt.Sprintf("password=%s", password))
 	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
 	// mountOptions = append(mountOptions, mountFlags...)
-	if err := mounter.Mount(volume.VolSource, volume.VolPath, mountOptions); err != nil {
+	if err := d.Mounter.Mount(volume.VolSource, volume.VolPath, mountOptions); err != nil {
 		return nil, status.Error(codes.Internal, "Failed temporarily mounting storage for taking snapshot")
 	}
-	if _, err := os.Stat(filepath.Join(volume.VolPath, volume.VolID)); err != nil {
-		klog.Info(err)
-	} else {
+	if exists := d.Mounter.PathExists(filepath.Join(volume.VolPath, volume.VolID)); exists {
 		snapvolumePath = filepath.Join(volume.VolPath, volume.VolID)
 	}
 
@@ -364,7 +362,7 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 		return nil, err
 	}
 
-	if err := mounter.Unmount(volume.VolPath); err != nil {
+	if err := d.Mounter.Unmount(volume.VolPath); err != nil {
 		klog.Infof("Unomunt err: %s", err)
 		return nil, err
 	}

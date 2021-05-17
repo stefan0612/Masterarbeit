@@ -133,6 +133,15 @@ func New(statefilePath string) (State, error) {
 	return s, s.restore()
 }
 
+func NewMock(statefilePath string) (State, error) {
+	s := &state{
+		resources: resources{},
+		statefilePath: statefilePath,
+	}
+
+	return s, s.restore()
+}
+
 func (s *state) dump() error {
 	data, err := json.Marshal(&s.resources)
 	if err != nil {

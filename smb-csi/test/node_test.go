@@ -61,3 +61,12 @@ func TestNodeGetVolumeStats_NoVolumePath(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 }
+
+func TestNodeGetVolumeStats_VolumePath(t *testing.T) {
+	req := csi.NodeGetVolumeStatsRequest{
+		VolumePath: "redundant path",
+	}
+	resp, err := d.NodeGetVolumeStats(ctx, &req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"smb-csi/driver/mounter"
 	"smb-csi/driver/state"
 )
 
@@ -24,7 +25,8 @@ type Driver struct {
 	Name       string
 	Version    string
 	NodeID     string
-	StateDir  string
+	StateDir   string
+	Mounter	   mounter.Mounter
 	server     *grpc.Server
 	State      state.State
 }
@@ -42,12 +44,14 @@ func NewDriver(nodeID string) (*Driver, error) {
 		return nil, stateErr
 	}
 
+
 	return &Driver{
-		Name:    driverName,
-		Version: driverVersion,
+		Name:     driverName,
+		Version:  driverVersion,
 		StateDir: driverStateDir,
-		NodeID:  nodeID,
-		State:   smbState,
+		Mounter:  *mounter.NewMounter(),
+		NodeID:   nodeID,
+		State:    smbState,
 	}, nil
 }
 

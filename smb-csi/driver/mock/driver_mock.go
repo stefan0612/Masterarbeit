@@ -77,6 +77,7 @@ func NewMockDriver(nodeID string) (*driver.Driver, error) {
 		Name:     driverName,
 		Version:  driverVersion,
 		StateDir: driverStateDir,
+		Mounter:  *NewFakeMounter(),
 		NodeID:   nodeID,
 		State:    smbState,
 	}, nil

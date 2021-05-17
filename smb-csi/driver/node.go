@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 	"os"
 	"path"
 	"path/filepath"
-	"smb-csi/driver/mounter"
 	"strconv"
 )
 
@@ -53,13 +51,13 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
 	mountOptions = append(mountOptions, mountFlags...)
 
-	if err := mounter.Mount(source, targetPath, mountOptions); err != nil {
+	if err := d.Mounter.Mount(source, targetPath, mountOptions); err != nil {
 		klog.Infof("Failed: %s", err.Error())
 		return nil, err
 	}
 
 	if createSubDir {
-		if createDirErr := os.MkdirAll(path.Join(targetPath, request.GetVolumeId()), os.ModeDir); createDirErr != nil {
+		if createDirErr := d.Mounter.CreateDir(path.Join(targetPath, request.GetVolumeId()), os.ModeDir); createDirErr != nil {
 			return nil, status.Errorf(codes.Internal,"Failed creating mount directory: %s", createDirErr.Error())
 		}
 	}
@@ -74,11 +72,11 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstage
 		return nil, status.Error(codes.InvalidArgument, "Empty Target Path")
 	}
 
-	if err := mounter.Unmount(targetPath); err != nil {
+	if err := d.Mounter.Unmount(targetPath); err != nil {
 		return nil, err
 	}
 
-	if deleteDirErr := os.RemoveAll(targetPath); deleteDirErr != nil {
+	if deleteDirErr := d.Mounter.DeleteDir(targetPath); deleteDirErr != nil {
 		return nil, status.Error(codes.Internal,"Failed removing directory after unmount")
 	}
 
@@ -90,12 +88,14 @@ func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublish
 	stagingPath := request.GetStagingTargetPath()
 	targetPath := request.GetTargetPath()
 	volumeContext := request.GetVolumeContext()
+	if stagingPath == "" { return nil, status.Error(codes.InvalidArgument, "No Staging Path Present")}
+	if targetPath == "" { return nil, status.Error(codes.InvalidArgument, "No Staging Path Present")}
 
 	if createSubDir, _ := strconv.ParseBool(volumeContext["createSubDir"]); createSubDir {
 		stagingPath = path.Join(stagingPath, request.GetVolumeId())
 	}
 
-	if err := mounter.BindMount(stagingPath, targetPath); err != nil {
+	if err := d.Mounter.BindMount(stagingPath, targetPath); err != nil {
 		return nil, err
 	}
 
@@ -109,11 +109,11 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpub
 		return nil, status.Error(codes.InvalidArgument, "Empty Target Path")
 	}
 
-	if err := mounter.Unmount(targetPath); err != nil {
+	if err := d.Mounter.Unmount(targetPath); err != nil {
 		return nil, err
 	}
 
-	if deleteDirErr := os.RemoveAll(targetPath); deleteDirErr != nil {
+	if deleteDirErr := d.Mounter.DeleteDir(targetPath); deleteDirErr != nil {
 		return nil, status.Error(codes.Internal,"Failed removing directory after unmount")
 	}
 
@@ -127,10 +127,12 @@ func (d *Driver) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVol
 		return nil, status.Error(codes.InvalidArgument, "Volume Path is missing")
 	}
 
-	var stat unix.Statfs_t
+	/*var stat unix.Statfs_t
 	if err := unix.Statfs(volumePath, &stat); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "Error while getting volume stats")
-	}
+	}*/
+	stat, err := d.Mounter.GetFilesystemInfo(volumePath)
+	if err != nil { return nil, status.Error(codes.InvalidArgument, "Error while getting volume stats") }
 
 	var totalSize int64
 	var used int64
@@ -150,7 +152,7 @@ func (d *Driver) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVol
 		return err
 	})
 	if fileTraverseErr != nil {
-		return nil, status.Error(codes.Internal, "Failed calculating used space")
+		used = 0
 	}
 
 	// Available Size, calculated by subtracting used space from total space

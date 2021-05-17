@@ -88,7 +88,6 @@ func TestListVolumes_VeryHighMaxEntries(t *testing.T) {
 
 func TestListSnapshots_All(t *testing.T) {
 	req := csi.ListSnapshotsRequest{}
-	println(len(d.State.GetSnapshots()))
 	resp, err := d.ListSnapshots(ctx, &req)
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
