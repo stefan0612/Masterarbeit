@@ -5,6 +5,10 @@ import (
 	"fmt"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	"net"
 	"net/url"
@@ -27,32 +31,45 @@ type Driver struct {
 	NodeID     string
 	StateDir   string
 	Mounter	   mounter.Mounter
+	PVClient   v1.PersistentVolumeInterface
+	RestClient dynamic.Interface
 	server     *grpc.Server
 	State      state.State
 }
 
 func NewDriver(nodeID string) (*Driver, error) {
 
-	if stateDirErr := os.MkdirAll(driverStateDir, 0750); os.IsExist(stateDirErr) {
+	if stateDirErr := os.MkdirAll(driverStateDir, 0750); stateDirErr != nil {
 		klog.Infof("Error creating state directory: %s", stateDirErr)
 		return nil, stateDirErr
 	}
 
-	smbState, stateErr := state.New(path.Join(driverStateDir, "state.json"))
-	if stateErr != nil {
-		klog.Infof("Error creating smb state class: %s", stateErr)
-		return nil, stateErr
+	smbState := state.New(path.Join(driverStateDir, "state.json"))
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		klog.Infof("Error creating cluster config: %s", err)
 	}
 
-
-	return &Driver{
+	driver := &Driver{
 		Name:     driverName,
 		Version:  driverVersion,
 		StateDir: driverStateDir,
 		Mounter:  *mounter.NewMounter(),
 		NodeID:   nodeID,
 		State:    smbState,
-	}, nil
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	pvClient := client.CoreV1().PersistentVolumes()
+	driver.PVClient = pvClient
+
+	// No other possibility known to request existing volumesnapshots, because go-client has no snapshot support
+	// Will not work with Version v1beta1 or v1alpha1, thus only use API-version v1 to create snapshots
+	restClient, _ := dynamic.NewForConfig(config)
+	driver.RestClient = restClient
+
+	return driver, nil
 }
 
 func (d *Driver) Run(endpoint string) error {

@@ -5,9 +5,14 @@ metadata:
 provisioner: seitenbau.csi.smb
 parameters:
   source: "//10.96.0.149/share"
+  server: "10.96.0.149"
+  share: "share"
   csi.storage.k8s.io/node-stage-secret-name: "my-secret"
   csi.storage.k8s.io/node-stage-secret-namespace: "default"
-  createSubDir: "true"
+  csi.storage.k8s.io/controller-publish-secret-name: "my-secret"
+  csi.storage.k8s.io/controller-publish-secret-namespace: "default"
+  csi.storage.k8s.io/provisioner-secret-name: "my-secret"
+  csi.storage.k8s.io/provisioner-secret-namespace: "default"
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
 mountOptions:

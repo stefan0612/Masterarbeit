@@ -2,162 +2,217 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/otiai10/copy"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"k8s.io/apimachinery/pkg/util/uuid"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
+	"os"
 	"path/filepath"
-	"smb-csi/driver/healtchCheck"
 	"smb-csi/driver/snapshotter"
-	"smb-csi/driver/state"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
+	klog.Infof("create request: %+v", request)
 
 	requestCapacity := request.GetCapacityRange().GetRequiredBytes()
 	requestContentSource := request.GetVolumeContentSource()
-	requestName := request.GetName()
+	requestedVolumeID := request.GetName()
 	requestParameters := request.GetParameters()
-
-	if requestName == "" { return nil, status.Error(codes.InvalidArgument, "No VolumeID specified") }
-	if len(requestParameters) == 0  {
-		return nil, status.Error(codes.InvalidArgument, "PV should contain at least the source attribute")
+	share, isSharePresent := requestParameters["share"]
+	if !isSharePresent {
+		return nil, status.Error(codes.InvalidArgument,"No smb-share source is present")
+	}
+	server, isServerPresent := requestParameters["server"]
+	if !isServerPresent {
+		return nil, status.Error(codes.InvalidArgument,"No smb-server source is present")
 	}
 
-	vol, err := d.State.GetVolumeByName(requestName)
-	if err == nil {
-		if vol.VolSize < requestCapacity {
-			return nil, status.Error(codes.AlreadyExists, "Requested PV does already exist, but is to small for the request")
-		} else {
-			klog.Infof("Volume already exists")
-			return &csi.CreateVolumeResponse{
-				Volume: &csi.Volume{
-					VolumeId:           vol.VolID,
-					CapacityBytes:      vol.VolSize,
-					VolumeContext:      requestParameters,
-					ContentSource:      requestContentSource,
-				},
-			}, nil
-		}
+	if requestedVolumeID == "" { return nil, status.Error(codes.InvalidArgument, "No VolumeID specified") }
+
+	if vol, err := d.PVClient.Get(ctx, requestedVolumeID, v1.GetOptions{}); err == nil {
+		return &csi.CreateVolumeResponse{
+			Volume: &csi.Volume{
+				VolumeId: vol.GetName(),
+				VolumeContext: requestParameters,
+				ContentSource: requestContentSource,
+			},
+		}, nil
 	}
 
-	volumeID := string(uuid.NewUUID())
-	path := filepath.Join(d.StateDir, volumeID)
-	if mountErr := d.Mounter.CreateDir(path, 0777); mountErr != nil {
-		klog.Infof("Failed create state dir %s", mountErr.Error())
-		return nil, status.Error(codes.Internal, "Failed creating local PV")
-	}
-
-	newVol := state.Volume{
-		VolID: volumeID,
-		VolName: requestName,
-		VolSize: requestCapacity,
-		VolPath: filepath.Join(d.StateDir, volumeID),
-		VolAccessType: state.MountAccess,
-		Ephemeral: false,
-	}
-
-	if updateErr := d.State.UpdateVolume(newVol); updateErr != nil {
-		return nil, status.Error(codes.Internal, updateErr.Error())
-	}
-
-	return &csi.CreateVolumeResponse{
+	resp := &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
-			VolumeId: volumeID,
+			VolumeId: requestedVolumeID,
 			VolumeContext: requestParameters,
 			CapacityBytes: requestCapacity,
-			ContentSource: requestContentSource,
 		},
-	}, nil
+	}
+
+	serverSharePath := "//" + strings.Join([]string{server, share}, "/")
+	localSharePath := filepath.Join(driverStateDir, share)
+	localVolumePath := filepath.Join(localSharePath, requestedVolumeID)
+	if err := d.Mounter.AuthMount(serverSharePath, localSharePath, request.GetSecrets(), nil); err != nil {
+		klog.Infof("Failed: %s", err.Error())
+		return nil, err
+	}
+	defer d.Mounter.Unmount(localSharePath)
+
+	if err := d.Mounter.CreateDir(localVolumePath, os.ModeDir); err != nil {
+		klog.Infof("Failed: %s", err.Error())
+		return nil, err
+	}
+
+	switch requestContentSource.GetType().(type) {
+	case *csi.VolumeContentSource_Snapshot:
+		snapID := requestContentSource.GetSnapshot().GetSnapshotId()
+		snap, err := d.RestClient.Resource(schema.GroupVersionResource{
+			Group: "snapshot.storage.k8s.io",
+			Resource: "volumesnapshotcontents",
+			Version: "v1",
+		}).Get(ctx, strings.Replace(snapID, "shot", "content", 1), v1.GetOptions{})
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "Requested Snap with ID: %s does not exist", snapID)
+		}
+		spec := snap.Object["spec"].(map[string]interface{})
+		rollbackVolID := spec["source"].(map[string]interface{})["volumeHandle"].(string)
+
+		rollbackPV, err := d.PVClient.Get(ctx, rollbackVolID, v1.GetOptions{})
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "Volume referenced by snapshot does not exist", rollbackVolID)
+		}
+		res, _ :=json.MarshalIndent(rollbackPV,"", "\t")
+		klog.Info(string(res))
+
+		rollbackServer := rollbackPV.Spec.CSI.VolumeAttributes["server"]
+		rollbackShare := rollbackPV.Spec.CSI.VolumeAttributes["share"]
+
+		rollbackServerVolumePath := "//" + strings.Join([]string{rollbackServer, rollbackShare, rollbackVolID}, "/")
+		rollbackLocalSharePath := filepath.Join(driverStateDir, share)
+		rollbackLocalVolumePath := filepath.Join(rollbackLocalSharePath, rollbackVolID)
+
+
+		if rollbackShare != share {
+			if err := d.Mounter.AuthMount(rollbackServerVolumePath, rollbackLocalVolumePath, request.GetSecrets(), nil); err != nil {
+				klog.Infof("Failed: %s", err.Error())
+				return nil, err
+			}
+		}
+
+		snapFile := fmt.Sprintf("%s/%s.snap", rollbackLocalVolumePath, snapID)
+		if err := snapshotter.ExtractSnap(snapFile, localVolumePath); err != nil {
+			klog.Infof("Failed: %s", err.Error())
+			return nil, err
+		}
+
+		resp.Volume.ContentSource = &csi.VolumeContentSource{
+			Type: &csi.VolumeContentSource_Snapshot{
+				Snapshot: &csi.VolumeContentSource_SnapshotSource{
+					SnapshotId: snapID,
+				},
+			},
+		}
+	case *csi.VolumeContentSource_Volume:
+		rollbackVolID := requestContentSource.GetVolume().GetVolumeId()
+		rollbackPV, err := d.PVClient.Get(ctx, rollbackVolID, v1.GetOptions{})
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "Requested Volume with ID: %s does not exist", rollbackVolID)
+		}
+		rollbackServer := rollbackPV.Spec.CSI.VolumeAttributes["server"]
+		rollbackShare := rollbackPV.Spec.CSI.VolumeAttributes["share"]
+
+		rollbackServerVolumePath := "//" + strings.Join([]string{rollbackServer, rollbackShare, rollbackVolID}, "/")
+		rollbackLocalVolumePath := filepath.Join(driverStateDir, share, rollbackVolID)
+
+		if rollbackShare != share {
+			if err := d.Mounter.AuthMount(rollbackServerVolumePath, rollbackLocalVolumePath, request.GetSecrets(), nil); err != nil {
+				klog.Infof("Failed: %s", err.Error())
+				return nil, err
+			}
+		}
+
+		if err := copy.Copy(rollbackLocalVolumePath, localVolumePath); err != nil {
+			klog.Infof("Failed populating Volume with other Volumestate: %s", err.Error())
+			break
+		}
+
+		if err := d.Mounter.Unmount(rollbackLocalVolumePath); err != nil {
+			klog.Infof("failed unmounting local rollback vol path: %s", err.Error())
+		}
+
+		resp.Volume.ContentSource = &csi.VolumeContentSource{
+			Type: &csi.VolumeContentSource_Volume{
+				Volume: &csi.VolumeContentSource_VolumeSource{
+					VolumeId: requestContentSource.GetVolume().GetVolumeId(),
+				},
+			},
+		}
+	default:
+		break
+	}
+
+	return resp, nil
 }
 
 func (d *Driver) DeleteVolume(ctx context.Context, request *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
-
-	requestID := request.GetVolumeId()
-	path := filepath.Join(d.StateDir, requestID)
-
-	vol, err := d.State.GetVolumeByID(requestID)
-	if err != nil {
-		return &csi.DeleteVolumeResponse{}, nil
-	}
-	if vol.IsAttached || vol.IsPublished || vol. IsStaged {
-		return nil, status.Error(codes.FailedPrecondition, "PV Cannot be deleted while in use")
-	}
-
-	if removeDirErr := d.Mounter.DeleteDir(path); removeDirErr != nil && removeDirErr == nil {
-		return nil, status.Error(codes.Internal, removeDirErr.Error())
-	}
-
-	if deleteVolErr := d.State.DeleteVolume(requestID); deleteVolErr != nil {
-		return nil, status.Error(codes.Internal, deleteVolErr.Error())
-	}
-
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
 func (d *Driver) ControllerPublishVolume(ctx context.Context, request *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 
-	volId := request.GetVolumeId()
+	volumeId := request.GetVolumeId()
 	volumeContext := request.GetVolumeContext()
-	source, _ := volumeContext["source"]
-	nodeID := request.GetNodeId()
-	if nodeID == "" {
-		return nil, status.Error(codes.InvalidArgument, "NodeID missing")
+	secrets := request.GetSecrets()
+	mountFlags := request.GetVolumeCapability().GetMount().GetMountFlags()
+
+	// Check if source path is present
+	server, isServerPresent := volumeContext["server"]
+	if !isServerPresent {
+		return nil, status.Error(codes.InvalidArgument,"No smb-server source is present")
 	}
 
-	vol, err := d.State.GetVolumeByID(volId)
-	if err != nil {
-		// Volume was statically/externally provisioned and is not in the storage, thus creating it
-		newVol := state.Volume{
-			VolID: volId,
-			VolPath: filepath.Join(d.StateDir, volId),
-			VolSource: source,
-			VolAccessType: state.MountAccess,
-			Ephemeral: false,
-			NodeID: request.NodeId,
-			IsAttached: true,
-		}
-
-		err := d.State.UpdateVolume(newVol)
-		if err != nil {
-			return nil, err
-		}
-		return &csi.ControllerPublishVolumeResponse{}, nil
+	share, isSharePresent := volumeContext["share"]
+	if !isSharePresent {
+		return nil, status.Error(codes.InvalidArgument,"No smb-share source is present")
 	}
 
-	vol.NodeID = nodeID
-	vol.IsAttached = true
-	vol.VolSource = source
+	sourceMountPoint := "//" + strings.Join([]string{server, share}, "/")
 
-	if updateErr := d.State.UpdateVolume(vol); updateErr != nil {
-		return nil, status.Error(codes.Internal, "Failed updating Volume State")
+	if err := d.Mounter.AuthMount(sourceMountPoint, filepath.Join(d.StateDir, share), secrets, mountFlags); err != nil {
+		klog.Infof("Failed: %s", err.Error())
+		return nil, err
 	}
+
+	if err := d.Mounter.CreateDir(filepath.Join(d.StateDir, share, volumeId), os.ModeDir); err != nil {
+		return nil, err
+	}
+
+	_ = d.Mounter.Unmount(filepath.Join(d.StateDir, share))
 
 	return &csi.ControllerPublishVolumeResponse{}, nil
-	// return nil, status.Error(codes.Unavailable,"Filesystem-attach is not supported")
 }
 
 func (d *Driver) ControllerUnpublishVolume(ctx context.Context, request *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
 
-	vol, err := d.State.GetVolumeByID(request.GetVolumeId())
+	volumeID := request.GetVolumeId()
+
+	pv, err := d.PVClient.Get(ctx, volumeID, v1.GetOptions{})
 	if err != nil {
-		return &csi.ControllerUnpublishVolumeResponse{}, nil
+		return nil, status.Errorf(codes.InvalidArgument,"Cannot find Volume with ID: %s", volumeID)
 	}
 
-	vol.NodeID = ""
-	vol.IsAttached = false
+	share := pv.Spec.CSI.VolumeAttributes["share"]
 
-	if updateErr := d.State.UpdateVolume(vol); updateErr != nil {
-		return nil, status.Error(codes.Internal, "Failed updating Volume State")
-	}
+	_ = d.Mounter.Unmount(filepath.Join(d.StateDir, share, volumeID))
 
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
-	// return nil, status.Error(codes.Unavailable,"Filesystem-detach is not supported")
 }
 
 func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, request *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
@@ -244,7 +299,7 @@ func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesReques
 	for index := startingIndex - 1; index < volumeLength && index < startingIndex + maxEntries - 1; index++ {
 
 		vol := vols[index]
-		healthy, reason := healtchCheck.HealthCheck(vol)
+		//healthy, reason := healtchCheck.HealthCheck(vol)
 
 		entries = append(entries, &csi.ListVolumesResponse_Entry{
 			Volume: &csi.Volume{
@@ -254,8 +309,8 @@ func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesReques
 			Status: &csi.ListVolumesResponse_VolumeStatus{
 				PublishedNodeIds: []string{vol.NodeID},
 				VolumeCondition: &csi.VolumeCondition{
-					Abnormal: !healthy,
-					Message: reason,
+					Abnormal: false,
+					Message: "reason",
 				},
 			},
 		})
@@ -282,6 +337,7 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 		csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 		csi.ControllerServiceCapability_RPC_VOLUME_CONDITION,
+		csi.ControllerServiceCapability_RPC_CLONE_VOLUME,
 	}
 
 	var capabilityObjects []*csi.ControllerServiceCapability
@@ -304,88 +360,115 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 
 func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
 	requestVolID := request.GetSourceVolumeId()
+	//requestName := strings.Replace(request.GetName(), "shot", "content", 1)
 	requestName := request.GetName()
-	volume, err := d.State.GetVolumeByID(requestVolID)
-	if err != nil { return nil, err}
-
-	snapvolumePath := volume.VolPath
-
 	secrets := request.GetSecrets()
-	username, _ := secrets["username"]
-	password, _ := secrets["password"]
+	klog.Infof("VolID: %s", requestVolID)
+	klog.Infof("SnapName: %s", requestName)
+	klog.Infof("Create Snap request: %+v", request)
 
-	// Return existing Snapshot if present
-	if existingSnap, err := d.State.GetSnapshotByName(requestName); err == nil {
-		if existingSnap.VolID == requestVolID {
-			return &csi.CreateSnapshotResponse{
-				Snapshot: &csi.Snapshot{
-					SnapshotId: existingSnap.Id,
-					SourceVolumeId: existingSnap.VolID,
-					CreationTime: existingSnap.CreationTime,
-					SizeBytes: existingSnap.SizeBytes,
-					ReadyToUse: existingSnap.ReadyToUse,
-				},
-			}, nil
-		}
+	// Return existing Snapshot if one exists
+	existSnap, err := d.RestClient.Resource(schema.GroupVersionResource{
+		Group: "snapshot.storage.k8s.io",
+		Resource: "volumesnapshotcontents",
+		Version: "v1",
+	}).Get(ctx, requestName, v1.GetOptions{})
+	if err == nil {
+
+		snapSpec := existSnap.Object["spec"].(map[string]interface{})
+		snapStatus := existSnap.Object["status"].(map[string]interface{})
+		volID := snapSpec["source"].(map[string]interface{})["volumeHandle"].(string)
+		snapID := snapStatus["snapshotHandle"].(string)
+		restoreSize := snapStatus["restoreSize"].(int64)
+		readyToUse := snapStatus["readyToUse"].(bool)
+
+
+		return &csi.CreateSnapshotResponse{
+			Snapshot: &csi.Snapshot{
+				SnapshotId: snapID,
+				SourceVolumeId: volID,
+				// CreationTime: existingSnap.CreationTime,
+				SizeBytes: restoreSize,
+				ReadyToUse: readyToUse,
+			},
+		}, nil
 	}
 
-	var mountOptions []string
-	mountOptions = append(mountOptions, fmt.Sprintf("username=%s", username))
-	mountOptions = append(mountOptions, fmt.Sprintf("password=%s", password))
-	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
-	// mountOptions = append(mountOptions, mountFlags...)
-	if err := d.Mounter.Mount(volume.VolSource, volume.VolPath, mountOptions); err != nil {
-		return nil, status.Error(codes.Internal, "Failed temporarily mounting storage for taking snapshot")
+	pv, err := d.PVClient.Get(ctx, requestVolID, v1.GetOptions{})
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Cannot find requested PV with id: %s", requestVolID)
 	}
-	if exists := d.Mounter.PathExists(filepath.Join(volume.VolPath, volume.VolID)); exists {
-		snapvolumePath = filepath.Join(volume.VolPath, volume.VolID)
+	volShare := pv.Spec.CSI.VolumeAttributes["share"]
+	volServer := pv.Spec.CSI.VolumeAttributes["server"]
+	volID := pv.GetName()
+	volPath := filepath.Join(driverStateDir, volShare, volID)
+
+	sourceVolumePoint := "//" + strings.Join([]string{volServer, volShare, volID}, "/")
+
+	if err := d.Mounter.AuthMount(sourceVolumePoint, volPath, secrets, nil); err != nil {
+		klog.Infof("Failed: %s", err.Error())
+		return nil, err
 	}
 
-	snapshotID := string(uuid.NewUUID())
+	snapshotID := requestName
 	createdTime := timestamppb.Now()
-	snapFile := filepath.Join(d.StateDir, snapshotID) + ".snap"
-	if err := snapshotter.CreateSnapshot(snapvolumePath, snapFile); err != nil {
+	snapFile := filepath.Join(volPath, snapshotID) + ".snap"
+	if err := snapshotter.CreateSnapshot(volPath, snapFile); err != nil {
 		return nil, err
 	}
-
-	snapshot := state.Snapshot{
-		Name: requestName,
-		Id: snapshotID,
-		VolID: volume.VolID,
-		Path: snapFile,
-		CreationTime: createdTime,
-		SizeBytes: volume.VolSize,
-		ReadyToUse: true,
-	}
-
-	if err := d.State.UpdateSnapshot(snapshot); err != nil {
-		return nil, err
-	}
-
-	if err := d.Mounter.Unmount(volume.VolPath); err != nil {
-		klog.Infof("Unomunt err: %s", err)
-		return nil, err
+	if err := d.Mounter.Unmount(volPath); err != nil {
+		klog.Infof("Failed unmounting: %s", err.Error())
 	}
 
 	return &csi.CreateSnapshotResponse{
 		Snapshot: &csi.Snapshot{
-			SnapshotId: snapshot.Id,
-			SourceVolumeId: snapshot.VolID,
-			CreationTime: snapshot.CreationTime,
-			SizeBytes: snapshot.SizeBytes,
-			ReadyToUse: snapshot.ReadyToUse,
+			SnapshotId: snapshotID,
+			SourceVolumeId: volID,
+			CreationTime: createdTime,
+			// SizeBytes: snapshot.SizeBytes,
+			ReadyToUse: true,
 		},
 	}, nil
 }
 
 func (d *Driver) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
+
 	requestSnapID := request.GetSnapshotId()
+	secrets := request.GetSecrets()
 
-	snap, err := d.State.GetSnapshotByID(requestSnapID)
-	if err != nil { return &csi.DeleteSnapshotResponse{}, nil }
+	snap, snapErr := d.RestClient.Resource(schema.GroupVersionResource{
+		Group: "snapshot.storage.k8s.io",
+		Resource: "volumesnapshotcontents",
+		Version: "v1",
+	}).Get(ctx, strings.Replace(requestSnapID, "shot", "content", 1), v1.GetOptions{})
+	if snapErr != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Cannot find Snapshot with ID: %s", requestSnapID)
+	}
 
-	if err := d.State.DeleteSnapshot(snap.Id); err != nil { return &csi.DeleteSnapshotResponse{}, nil }
-	if err := snapshotter.DeleteSnapshot(snap.Path); err != nil { return &csi.DeleteSnapshotResponse{}, nil }
+	spec := snap.Object["spec"].(map[string]interface{})
+	volID := spec["source"].(map[string]interface{})["volumeHandle"].(string)
+	volume, err := d.PVClient.Get(ctx, volID, v1.GetOptions{})
+	if err != nil {
+		// Referenced volume not found or already deleted, nothing to do
+		return &csi.DeleteSnapshotResponse{}, nil
+	}
+
+	requestVolID := volume.GetName()
+	share := volume.Spec.CSI.VolumeAttributes["share"]
+	server := volume.Spec.CSI.VolumeAttributes["server"]
+	path := filepath.Join(driverStateDir, share, volID)
+	sourceVolumePoint := "//" + strings.Join([]string{server, share, requestVolID}, "/")
+
+	if err := d.Mounter.AuthMount(sourceVolumePoint, path, secrets, nil); err != nil {
+		klog.Infof("Failed: %s", err.Error())
+		return nil, err
+	}
+
+	if err := snapshotter.DeleteSnapshot(filepath.Join(path, requestSnapID) + ".snap"); err != nil { return &csi.DeleteSnapshotResponse{}, nil }
+
+	if err := d.Mounter.Unmount(path); err != nil {
+		klog.Infof("Failed unmounting: %s", err.Error())
+	}
 
 	return &csi.DeleteSnapshotResponse{}, nil
 }

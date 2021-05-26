@@ -13,9 +13,9 @@ then
   fi
 fi
 
-kubectl delete -f deploy/test/snapshot/smb-snapshot.yml
 # Deleting Client Chain (Depends on Servers, thus must be delete before Servers)
 kubectl delete -f deploy/test/client/smb-client.yml
+kubectl delete -f deploy/test/snapshot/smb-snapshot.yml
 kubectl delete -f deploy/storage/smb-pvc.yml
 kubectl delete -f deploy/storage/smb-sc.yml
 
@@ -27,5 +27,6 @@ kubectl delete -f deploy/test/server/smb-server.yml
 # Deleting Cluster Configurations
 #kubectl delete -f deploy/driverConfig/smb-driver.yml
 kubectl delete -f deploy/rbac-controller-server.yml
+kubectl delete -f deploy/rbac-node-server.yml
 kubectl delete -f deploy/secret/smb-secret.yml
 

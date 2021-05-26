@@ -45,3 +45,7 @@ func (*FakeMounter) BindMount(src string, target string) error {
 func (*FakeMounter) Unmount(target string) error {
 	return nil
 }
+
+func (*FakeMounter) AuthMount(source string, targetPath string, secrets map[string]string, mountFlags []string) error {
+	return nil
+}

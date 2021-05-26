@@ -16,11 +16,6 @@ limitations under the License.
 package state
 
 import (
-	"encoding/json"
-	"errors"
-	"io/ioutil"
-	"os"
-
 	timestamp "github.com/golang/protobuf/ptypes/timestamp"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -36,8 +31,9 @@ const (
 type Volume struct {
 	VolName        string
 	VolID          string
+	VolServer	   string
+	VolShare	   string
 	VolSize        int64
-	VolSource	   string
 	VolPath        string
 	VolAccessType  AccessType
 	ParentVolID    string
@@ -55,7 +51,6 @@ type Snapshot struct {
 	Name         string
 	Id           string
 	VolID        string
-	Path         string
 	CreationTime *timestamp.Timestamp
 	SizeBytes    int64
 	ReadyToUse   bool
@@ -79,20 +74,20 @@ type State interface {
 	// UpdateVolume updates the existing hostpath volume,
 	// identified by its volume ID, or adds it if it does
 	// not exist yet.
-	UpdateVolume(volume Volume) error
+	UpdateVolume(volume Volume)
 
 	// DeleteVolume deletes the volume with the given
 	// volume ID. It is not an error when such a volume
 	// does not exist.
-	DeleteVolume(volID string) error
+	DeleteVolume(volID string)
 
 	// GetSnapshotByID retrieves a snapshot by its unique ID or returns
 	// an error including that ID when not found.
 	GetSnapshotByID(snapshotID string) (Snapshot, error)
 
-	// GetSnapshotByName retrieves a snapshot by its name or returns
-	// an error including that name when not found.
-	GetSnapshotByName(volName string) (Snapshot, error)
+	// GetSnapshotByName retrieves a snapshot by its unique ID or returns
+	// an error including that ID when not found.
+	GetSnapshotByName(snapshotID string) (Snapshot, error)
 
 	// GetSnapshots returns all currently existing snapshots.
 	GetSnapshots() []Snapshot
@@ -100,12 +95,12 @@ type State interface {
 	// UpdateSnapshot updates the existing hostpath snapshot,
 	// identified by its snapshot ID, or adds it if it does
 	// not exist yet.
-	UpdateSnapshot(snapshot Snapshot) error
+	UpdateSnapshot(snapshot Snapshot)
 
 	// DeleteSnapshot deletes the snapshot with the given
 	// snapshot ID. It is not an error when such a snapshot
 	// does not exist.
-	DeleteSnapshot(snapshotID string) error
+	DeleteSnapshot(snapshotID string)
 }
 
 type resources struct {
@@ -125,50 +120,12 @@ var _ State = &state{}
 // and then ensures that all changes are mirrored immediately in the
 // given file. If not given, the initial state is empty and changes
 // are not saved.
-func New(statefilePath string) (State, error) {
+func New(statefilePath string) State {
 	s := &state{
 		statefilePath: statefilePath,
 	}
 
-	return s, s.restore()
-}
-
-func NewMock(statefilePath string) (State, error) {
-	s := &state{
-		resources: resources{},
-		statefilePath: statefilePath,
-	}
-
-	return s, s.restore()
-}
-
-func (s *state) dump() error {
-	data, err := json.Marshal(&s.resources)
-	if err != nil {
-		return status.Errorf(codes.Internal, "error encoding volumes and snapshots: %v", err)
-	}
-	if err := ioutil.WriteFile(s.statefilePath, data, 0600); err != nil {
-		return status.Errorf(codes.Internal, "error writing state file: %v", err)
-	}
-	return nil
-}
-
-func (s *state) restore() error {
-	s.Volumes = nil
-	s.Snapshots = nil
-
-	data, err := ioutil.ReadFile(s.statefilePath)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		// Nothing to do.
-		return nil
-	case err != nil:
-		return status.Errorf(codes.Internal, "error reading state file: %v", err)
-	}
-	if err := json.Unmarshal(data, &s.resources); err != nil {
-		return status.Errorf(codes.Internal, "error encoding volumes and snapshots from state file %q: %v", s.statefilePath, err)
-	}
-	return nil
+	return s
 }
 
 func (s *state) GetVolumeByID(volID string) (Volume, error) {
@@ -197,25 +154,23 @@ func (s *state) GetVolumes() []Volume {
 	return volumes
 }
 
-func (s *state) UpdateVolume(update Volume) error {
+func (s *state) UpdateVolume(update Volume) {
 	for i, volume := range s.Volumes {
 		if volume.VolID == update.VolID {
 			s.Volumes[i] = update
-			return s.dump()
+			return
 		}
 	}
 	s.Volumes = append(s.Volumes, update)
-	return s.dump()
 }
 
-func (s *state) DeleteVolume(volID string) error {
+func (s *state) DeleteVolume(volID string) {
 	for i, volume := range s.Volumes {
 		if volume.VolID == volID {
 			s.Volumes = append(s.Volumes[:i], s.Volumes[i+1:]...)
-			return s.dump()
+			return
 		}
 	}
-	return nil
 }
 
 func (s *state) GetSnapshotByID(snapshotID string) (Snapshot, error) {
@@ -227,13 +182,13 @@ func (s *state) GetSnapshotByID(snapshotID string) (Snapshot, error) {
 	return Snapshot{}, status.Errorf(codes.NotFound, "snapshot id %s does not exist in the snapshots list", snapshotID)
 }
 
-func (s *state) GetSnapshotByName(name string) (Snapshot, error) {
+func (s *state) GetSnapshotByName(snapshotName string) (Snapshot, error) {
 	for _, snapshot := range s.Snapshots {
-		if snapshot.Name == name {
+		if snapshot.Name == snapshotName {
 			return snapshot, nil
 		}
 	}
-	return Snapshot{}, status.Errorf(codes.NotFound, "snapshot name %s does not exist in the snapshots list", name)
+	return Snapshot{}, status.Errorf(codes.NotFound, "snapshot id %s does not exist in the snapshots list", snapshotName)
 }
 
 func (s *state) GetSnapshots() []Snapshot {
@@ -244,24 +199,22 @@ func (s *state) GetSnapshots() []Snapshot {
 	return snapshots
 }
 
-func (s *state) UpdateSnapshot(update Snapshot) error {
+func (s *state) UpdateSnapshot(update Snapshot) {
 	for i, snapshot := range s.Snapshots {
 		if snapshot.VolID == update.VolID {
 			s.Snapshots[i] = update
-			return s.dump()
+			return
 		}
 	}
 	s.Snapshots = append(s.Snapshots, update)
-	return s.dump()
 }
 
-func (s *state) DeleteSnapshot(snapshotID string) error {
+func (s *state) DeleteSnapshot(snapshotID string) {
 	for i, snapshot := range s.Snapshots {
 		if snapshot.Id == snapshotID {
 			s.Snapshots = append(s.Snapshots[:i], s.Snapshots[i+1:]...)
-			return s.dump()
+			return
 		}
 	}
-	return nil
 }
 

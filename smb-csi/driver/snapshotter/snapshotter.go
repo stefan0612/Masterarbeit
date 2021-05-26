@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
 	"io/ioutil"
 	"os"
@@ -29,6 +31,9 @@ func DeleteSnapshot(snapFile string) error {
 }
 
 func ExtractSnap(snapFileIn string, outPath string) error {
+	if createDirErr := os.MkdirAll(outPath, os.ModeDir); createDirErr != nil {
+		return status.Errorf(codes.Internal, "Failed creating mount directory: %s", createDirErr.Error())
+	}
 	content, readErr := ioutil.ReadFile(snapFileIn)
 	if readErr != nil {
 		return readErr

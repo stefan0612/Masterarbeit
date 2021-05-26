@@ -6,11 +6,10 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
-	"os"
-	"path"
-	"path/filepath"
-	"strconv"
+	"smb-csi/driver/healtchCheck"
+	"strings"
 )
 
 func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
@@ -20,17 +19,20 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	volumeContext := request.GetVolumeContext()
 	secrets := request.GetSecrets()
 	mountFlags := request.GetVolumeCapability().GetMount().GetMountFlags()
+	volumeId := request.GetVolumeId()
 
 	// Check if source path is present
-	source, isSourcePresent := volumeContext["source"]
-	if !isSourcePresent {
+	server, isServerPresent := volumeContext["server"]
+	if !isServerPresent {
+		return nil, status.Error(codes.InvalidArgument,"No smb-server source is present")
+	}
+
+	share, isSharePresent := volumeContext["share"]
+	if !isSharePresent {
 		return nil, status.Error(codes.InvalidArgument,"No smb-share source is present")
 	}
 
-	createSubDir, parseBoolErr := strconv.ParseBool(volumeContext["createSubDir"])
-	if parseBoolErr != nil {
-		createSubDir = false
-	}
+	sourceMountPoint := "//" + strings.Join([]string{server, share, volumeId}, "/")
 
 	// Check if  username (optional) is present, else log that no username was provided
 	username, isUsernamePresent := secrets["username"]
@@ -51,15 +53,9 @@ func (d *Driver) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolu
 	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
 	mountOptions = append(mountOptions, mountFlags...)
 
-	if err := d.Mounter.Mount(source, targetPath, mountOptions); err != nil {
+	if err := d.Mounter.Mount(sourceMountPoint, targetPath, mountOptions); err != nil {
 		klog.Infof("Failed: %s", err.Error())
 		return nil, err
-	}
-
-	if createSubDir {
-		if createDirErr := d.Mounter.CreateDir(path.Join(targetPath, request.GetVolumeId()), os.ModeDir); createDirErr != nil {
-			return nil, status.Errorf(codes.Internal,"Failed creating mount directory: %s", createDirErr.Error())
-		}
 	}
 
 	return &csi.NodeStageVolumeResponse{}, nil
@@ -72,13 +68,13 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstage
 		return nil, status.Error(codes.InvalidArgument, "Empty Target Path")
 	}
 
+	// Delete Directory on remote server when unmounting?
+
 	if err := d.Mounter.Unmount(targetPath); err != nil {
 		return nil, err
 	}
 
-	if deleteDirErr := d.Mounter.DeleteDir(targetPath); deleteDirErr != nil {
-		return nil, status.Error(codes.Internal,"Failed removing directory after unmount")
-	}
+	_ = d.Mounter.DeleteDir(targetPath)
 
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
@@ -87,13 +83,9 @@ func (d *Driver) NodePublishVolume(ctx context.Context, request *csi.NodePublish
 
 	stagingPath := request.GetStagingTargetPath()
 	targetPath := request.GetTargetPath()
-	volumeContext := request.GetVolumeContext()
+
 	if stagingPath == "" { return nil, status.Error(codes.InvalidArgument, "No Staging Path Present")}
 	if targetPath == "" { return nil, status.Error(codes.InvalidArgument, "No Staging Path Present")}
-
-	if createSubDir, _ := strconv.ParseBool(volumeContext["createSubDir"]); createSubDir {
-		stagingPath = path.Join(stagingPath, request.GetVolumeId())
-	}
 
 	if err := d.Mounter.BindMount(stagingPath, targetPath); err != nil {
 		return nil, err
@@ -113,61 +105,30 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpub
 		return nil, err
 	}
 
-	if deleteDirErr := d.Mounter.DeleteDir(targetPath); deleteDirErr != nil {
-		return nil, status.Error(codes.Internal,"Failed removing directory after unmount")
-	}
+	_ = d.Mounter.DeleteDir(targetPath)
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
 func (d *Driver) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
 
+	volumeID := request.GetVolumeId()
+	if volumeID == "" { return nil, status.Error(codes.InvalidArgument, "VolumeID is missing") }
 	volumePath := request.GetVolumePath()
-	if volumePath == "" {
-		return nil, status.Error(codes.InvalidArgument, "Volume Path is missing")
-	}
+	if volumePath == "" { return nil, status.Error(codes.InvalidArgument, "Volume Path is missing") }
 
-	/*var stat unix.Statfs_t
-	if err := unix.Statfs(volumePath, &stat); err != nil {
-		return nil, status.Error(codes.InvalidArgument, "Error while getting volume stats")
-	}*/
-	stat, err := d.Mounter.GetFilesystemInfo(volumePath)
-	if err != nil { return nil, status.Error(codes.InvalidArgument, "Error while getting volume stats") }
+	pv, err := d.PVClient.Get(ctx, volumeID, v1.GetOptions{})
+	if err != nil { return nil, status.Error(codes.InvalidArgument, "Volume does not exist") }
 
-	var totalSize int64
-	var used int64
-	var available int64
-
-	// Total Disk Size on Current Node
-	totalSize = stat.Bsize * int64(stat.Blocks)
-
-	// Total Used Space from given Node, calculated by iterating over every file and adding the filesize to a counter
-	fileTraverseErr := filepath.Walk(volumePath, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			used += info.Size()
-		}
-		return err
-	})
-	if fileTraverseErr != nil {
-		used = 0
-	}
-
-	// Available Size, calculated by subtracting used space from total space
-	available = totalSize - used
+	healthy, reason := healtchCheck.HealthCheck(volumePath, pv.Spec.Capacity.Storage().Value())
 
 	return &csi.NodeGetVolumeStatsResponse{
-		Usage: []*csi.VolumeUsage{
-			{
-				Unit: csi.VolumeUsage_BYTES,
-				Total: totalSize,
-				Available: available,
-				Used: used,
-			},
+		VolumeCondition: &csi.VolumeCondition{
+			Abnormal: !healthy,
+			Message: reason,
 		},
 	}, nil
+
 }
 
 func (d *Driver) NodeExpandVolume(ctx context.Context, request *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
@@ -179,6 +140,7 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, request *csi.NodeGetCa
 	capabilities := []csi.NodeServiceCapability_RPC_Type {
 		csi.NodeServiceCapability_RPC_GET_VOLUME_STATS,
 		csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
+		csi.NodeServiceCapability_RPC_VOLUME_CONDITION,
 	}
 
 	var capabilityObjects []*csi.NodeServiceCapability

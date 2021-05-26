@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 	"os"
-	"smb-csi/driver/state"
 )
 
-func HealthCheck(vol state.Volume) (bool, string) {
+func HealthCheck(volumePath string, volumeCapacity int64) (bool, string) {
 
-	spExist, err := checkPathExist(vol.VolPath)
+	spExist, err := checkPathExist(volumePath)
 	if err != nil {
 		return false, err.Error()
 	}
@@ -17,7 +16,7 @@ func HealthCheck(vol state.Volume) (bool, string) {
 		return false, "The source path of the volume doesn't exist"
 	}
 
-	capAndUsageValid, err := checkPVCapacityAndUsageValid(vol)
+	capAndUsageValid, err := checkPVCapacityAndUsageValid(volumePath, volumeCapacity)
 	if err != nil {
 		return false, err.Error()
 	}
@@ -64,15 +63,12 @@ func checkPathExist(path string) (bool, error) {
 
 	return true, nil
 }
-func checkPVCapacityAndUsageValid(volume state.Volume) (bool, error) {
-
-	volumePath := volume.VolPath
+func checkPVCapacityAndUsageValid(volumePath string, volumeCapacity int64) (bool, error) {
 
 	fsavailable, fscapacity, _, _, _, _, err := FsInfo(volumePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to get capacity info: %+v", err)
 	}
-	volumeCapacity := volume.VolSize
 	if fscapacity < volumeCapacity {
 		return false, fmt.Errorf("volume capacity surpassed filesystem capacity")
 	}

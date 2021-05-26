@@ -1,6 +1,7 @@
 package mounter
 
 import (
+	"fmt"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -15,6 +16,7 @@ type Mounter interface {
 	CreateDir(path string, mode os.FileMode) error
 	DeleteDir(path string) error
 	Mount(src string, target string, mountOptions []string) error
+	AuthMount(source string, targetPath string, secrets map[string]string, mountFlags []string) error
 	BindMount(src string, target string) error
 	Unmount(target string) error
 }
@@ -60,7 +62,7 @@ func (*BaseMounter) Mount(src string, target string, mountOptions []string) erro
 
 	//Check if the target path exist, else create it
 	if createDirErr := os.MkdirAll(target, os.ModeDir); createDirErr != nil {
-		return status.Errorf(codes.Internal, "Failed creating mount directory: %s", createDirErr.Error())
+		return status.Errorf(codes.Internal, "Failed creating mount directory: %s,%s", createDirErr.Error(), target)
 	}
 
 	// Build string from mountOptions array, separated by ","
@@ -68,7 +70,7 @@ func (*BaseMounter) Mount(src string, target string, mountOptions []string) erro
 
 	// Try to mount directory, else try to remove the created mounting-point directory and return error
 	if mountErr := unix.Mount(src, target, "cifs", 0, mountOptionsString); mountErr != nil {
-		return status.Error(codes.Internal,"Failed mounting directory")
+		return status.Errorf(codes.Internal,"Failed mounting directory: %s", mountErr.Error())
 	}
 	return nil
 }
@@ -106,4 +108,27 @@ func (*BaseMounter) Unmount(target string) error {
 	}
 
 	return nil
+}
+
+func (m *BaseMounter) AuthMount(source string, targetPath string, secrets map[string]string, mountFlags []string) error {
+
+	// Check if  username (optional) is present, else log that no username was provided
+	username, isUsernamePresent := secrets["username"]
+	if !isUsernamePresent {
+		klog.Info("No username specified in secrets")
+	}
+
+	// Check if  password (optional) is present, else log that no password was provided
+	password, isPasswordPresent := secrets["password"]
+	if !isPasswordPresent {
+		klog.Info("No password specified in secrets")
+	}
+
+	var mountOptions []string
+	mountOptions = append(mountOptions, fmt.Sprintf("username=%s", username))
+	mountOptions = append(mountOptions, fmt.Sprintf("password=%s", password))
+	mountOptions = append(mountOptions, fmt.Sprintf("vers=%s", "3.0"))
+	if mountFlags != nil && len(mountFlags) > 0 { mountOptions = append(mountOptions, mountFlags...) }
+
+	return m.Mount(source, targetPath, mountOptions)
 }

@@ -24,6 +24,7 @@ make clean
 
 # Creating Cluster Configurations
 kubectl apply -f deploy/rbac-controller-server.yml
+kubectl apply -f deploy/rbac-node-server.yml
 #kubectl apply -f deploy/driverConfig/smb-driver.yml
 kubectl apply -f deploy/secret/smb-secret.yml
 
@@ -33,7 +34,8 @@ kubectl apply -f deploy/node-server.yml
 kubectl apply -f deploy/controller-server.yml
 
 # Create Client Chain (Depends on Servers, thus must be created after Servers)
+kubectl apply -f deploy/snapshot/snapshot_class.yml
 kubectl apply -f deploy/storage/smb-sc.yml
 kubectl apply -f deploy/storage/smb-pvc.yml
+#kubectl apply -f deploy/storage/smb-pvc-snap.yml
 kubectl apply -f deploy/test/client/smb-client.yml
-#kubectl apply -f deploy/test/snapshot/smb-snapshot.yml
