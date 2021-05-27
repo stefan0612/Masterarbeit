@@ -1,11 +1,11 @@
 kind: Pod
 apiVersion: v1
 metadata:
-  name: nginx-smb
+  name: smb-client
 spec:
   containers:
     - image: mcr.microsoft.com/oss/nginx/nginx:1.17.3-alpine
-      name: nginx-smb
+      name: smb-client
       command:
         - "/bin/sh"
         - "-c"

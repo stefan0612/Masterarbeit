@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: controller-account
-  namespace: default
+  namespace: kube-system
 ---
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
@@ -66,7 +66,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: controller-account
-    namespace: default
+    namespace: kube-system
 roleRef:
   kind: ClusterRole
   name: smb-external-provisioner-role
@@ -78,7 +78,7 @@ kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   # replace with non-default namespace name
-  namespace: default
+  namespace: kube-system
   name: external-health-monitor-controller-cfg
 rules:
   - apiGroups: ["coordination.k8s.io"]
@@ -91,12 +91,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: csi-external-health-monitor-controller-role-cfg
   # replace with non-default namespace name
-  namespace: default
+  namespace: kube-system
 subjects:
   - kind: ServiceAccount
     name: controller-account
     # replace with non-default namespace name
-    namespace: default
+    namespace: kube-system
 roleRef:
   kind: Role
   name: external-health-monitor-controller-cfg

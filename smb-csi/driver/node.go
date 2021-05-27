@@ -120,14 +120,35 @@ func (d *Driver) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVol
 	pv, err := d.PVClient.Get(ctx, volumeID, v1.GetOptions{})
 	if err != nil { return nil, status.Error(codes.InvalidArgument, "Volume does not exist") }
 
-	healthy, reason := healtchCheck.HealthCheck(volumePath, pv.Spec.Capacity.Storage().Value())
 
-	return &csi.NodeGetVolumeStatsResponse{
+
+	healthy, reason := healtchCheck.HealthCheck(volumePath, pv.Spec.Capacity.Storage().Value())
+	resp := &csi.NodeGetVolumeStatsResponse{
 		VolumeCondition: &csi.VolumeCondition{
 			Abnormal: !healthy,
 			Message: reason,
 		},
-	}, nil
+	}
+
+	available, capacity, usage, inodes, inodesFree, inodesUsed, err := healtchCheck.FsInfo(volumePath)
+	if err == nil {
+		resp.Usage = []*csi.VolumeUsage{
+			{
+				Unit: csi.VolumeUsage_BYTES,
+				Available: available,
+				Total: capacity,
+				Used: usage,
+			},
+			{
+				Unit: csi.VolumeUsage_INODES,
+				Available: inodesFree,
+				Total: inodes,
+				Used: inodesUsed,
+			},
+		}
+	}
+
+	return resp, nil
 
 }
 

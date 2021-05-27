@@ -2,7 +2,6 @@ package driver
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/otiai10/copy"
@@ -18,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -59,11 +59,11 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 	serverSharePath := "//" + strings.Join([]string{server, share}, "/")
 	localSharePath := filepath.Join(driverStateDir, share)
 	localVolumePath := filepath.Join(localSharePath, requestedVolumeID)
+
 	if err := d.Mounter.AuthMount(serverSharePath, localSharePath, request.GetSecrets(), nil); err != nil {
 		klog.Infof("Failed: %s", err.Error())
 		return nil, err
 	}
-	defer d.Mounter.Unmount(localSharePath)
 
 	if err := d.Mounter.CreateDir(localVolumePath, os.ModeDir); err != nil {
 		klog.Infof("Failed: %s", err.Error())
@@ -86,10 +86,8 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 
 		rollbackPV, err := d.PVClient.Get(ctx, rollbackVolID, v1.GetOptions{})
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "Volume referenced by snapshot does not exist", rollbackVolID)
+			break
 		}
-		res, _ :=json.MarshalIndent(rollbackPV,"", "\t")
-		klog.Info(string(res))
 
 		rollbackServer := rollbackPV.Spec.CSI.VolumeAttributes["server"]
 		rollbackShare := rollbackPV.Spec.CSI.VolumeAttributes["share"]
@@ -102,14 +100,14 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 		if rollbackShare != share {
 			if err := d.Mounter.AuthMount(rollbackServerVolumePath, rollbackLocalVolumePath, request.GetSecrets(), nil); err != nil {
 				klog.Infof("Failed: %s", err.Error())
-				return nil, err
+				break
 			}
 		}
 
 		snapFile := fmt.Sprintf("%s/%s.snap", rollbackLocalVolumePath, snapID)
 		if err := snapshotter.ExtractSnap(snapFile, localVolumePath); err != nil {
 			klog.Infof("Failed: %s", err.Error())
-			return nil, err
+			break
 		}
 
 		resp.Volume.ContentSource = &csi.VolumeContentSource{
@@ -123,7 +121,7 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 		rollbackVolID := requestContentSource.GetVolume().GetVolumeId()
 		rollbackPV, err := d.PVClient.Get(ctx, rollbackVolID, v1.GetOptions{})
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "Requested Volume with ID: %s does not exist", rollbackVolID)
+			break
 		}
 		rollbackServer := rollbackPV.Spec.CSI.VolumeAttributes["server"]
 		rollbackShare := rollbackPV.Spec.CSI.VolumeAttributes["share"]
@@ -134,7 +132,7 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 		if rollbackShare != share {
 			if err := d.Mounter.AuthMount(rollbackServerVolumePath, rollbackLocalVolumePath, request.GetSecrets(), nil); err != nil {
 				klog.Infof("Failed: %s", err.Error())
-				return nil, err
+				break
 			}
 		}
 
@@ -157,6 +155,8 @@ func (d *Driver) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequ
 	default:
 		break
 	}
+
+	_ = d.Mounter.Unmount(localSharePath)
 
 	return resp, nil
 }
@@ -268,60 +268,7 @@ func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, request *csi.Va
 }
 
 func (d *Driver) ListVolumes(ctx context.Context, request *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
-
-	var entries []*csi.ListVolumesResponse_Entry
-	nextToken := ""
-
-	vols := d.State.GetVolumes()
-	volumeLength := len(vols)
-	sort.Slice(vols, func(i, j int) bool {
-		return vols[i].VolID < vols[j].VolID
-	})
-
-	maxEntries := int(request.GetMaxEntries())
-	if maxEntries == 0 { maxEntries = volumeLength }
-	if maxEntries < 0 { return nil, status.Error(codes.InvalidArgument, "Max Entries must not be negative or zero") }
-
-	startingToken := request.GetStartingToken()
-	if startingToken == "" { startingToken = "1" }
-
-	startingIndex, parseErr := strconv.Atoi(startingToken)
-	if parseErr != nil {
-		return nil, status.Error(codes.InvalidArgument, "StartingToken must be a number")
-	}
-	if startingIndex > volumeLength {
-		return &csi.ListVolumesResponse{}, nil
-	}
-	if startingIndex < 1 {
-		startingIndex = 1
-	}
-
-	for index := startingIndex - 1; index < volumeLength && index < startingIndex + maxEntries - 1; index++ {
-
-		vol := vols[index]
-		//healthy, reason := healtchCheck.HealthCheck(vol)
-
-		entries = append(entries, &csi.ListVolumesResponse_Entry{
-			Volume: &csi.Volume{
-				VolumeId: vol.VolID,
-				CapacityBytes: vol.VolSize,
-			},
-			Status: &csi.ListVolumesResponse_VolumeStatus{
-				PublishedNodeIds: []string{vol.NodeID},
-				VolumeCondition: &csi.VolumeCondition{
-					Abnormal: false,
-					Message: "reason",
-				},
-			},
-		})
-	}
-
-	if startingIndex + maxEntries <= volumeLength { nextToken = strconv.Itoa(startingIndex + maxEntries)}
-
-	return &csi.ListVolumesResponse{
-		Entries: entries,
-		NextToken: nextToken,
-	}, nil
+	panic("implement me")
 }
 
 func (d *Driver) GetCapacity(ctx context.Context, request *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
@@ -334,9 +281,7 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS,
-		csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
-		csi.ControllerServiceCapability_RPC_VOLUME_CONDITION,
 		csi.ControllerServiceCapability_RPC_CLONE_VOLUME,
 	}
 
@@ -359,15 +304,14 @@ func (d *Driver) ControllerGetCapabilities(ctx context.Context, request *csi.Con
 }
 
 func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
+
 	requestVolID := request.GetSourceVolumeId()
-	//requestName := strings.Replace(request.GetName(), "shot", "content", 1)
 	requestName := request.GetName()
 	secrets := request.GetSecrets()
-	klog.Infof("VolID: %s", requestVolID)
-	klog.Infof("SnapName: %s", requestName)
-	klog.Infof("Create Snap request: %+v", request)
 
 	// Return existing Snapshot if one exists
+	// No other possibility known to request existing volumesnapshots, because go-client has no snapshot support
+	// Will not work with Version v1beta1 or v1alpha1, thus only use API-version v1 to create snapshots
 	existSnap, err := d.RestClient.Resource(schema.GroupVersionResource{
 		Group: "snapshot.storage.k8s.io",
 		Resource: "volumesnapshotcontents",
@@ -381,13 +325,14 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 		snapID := snapStatus["snapshotHandle"].(string)
 		restoreSize := snapStatus["restoreSize"].(int64)
 		readyToUse := snapStatus["readyToUse"].(bool)
-
+		creationTime := snapStatus["creationTime"].(int64)
+		ts := timestamppb.New(time.Unix(creationTime, 0))
 
 		return &csi.CreateSnapshotResponse{
 			Snapshot: &csi.Snapshot{
 				SnapshotId: snapID,
 				SourceVolumeId: volID,
-				// CreationTime: existingSnap.CreationTime,
+				CreationTime: ts,
 				SizeBytes: restoreSize,
 				ReadyToUse: readyToUse,
 			},
@@ -412,9 +357,13 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 
 	snapshotID := requestName
 	createdTime := timestamppb.Now()
+	var snapSize int64 = 0
 	snapFile := filepath.Join(volPath, snapshotID) + ".snap"
 	if err := snapshotter.CreateSnapshot(volPath, snapFile); err != nil {
 		return nil, err
+	}
+	if fi, err := os.Stat(snapFile); err == nil {
+		snapSize = fi.Size()
 	}
 	if err := d.Mounter.Unmount(volPath); err != nil {
 		klog.Infof("Failed unmounting: %s", err.Error())
@@ -425,7 +374,7 @@ func (d *Driver) CreateSnapshot(ctx context.Context, request *csi.CreateSnapshot
 			SnapshotId: snapshotID,
 			SourceVolumeId: volID,
 			CreationTime: createdTime,
-			// SizeBytes: snapshot.SizeBytes,
+			SizeBytes: snapSize,
 			ReadyToUse: true,
 		},
 	}, nil
@@ -478,11 +427,19 @@ func (d *Driver) ListSnapshots(ctx context.Context, request *csi.ListSnapshotsRe
 	var entries []*csi.ListSnapshotsResponse_Entry
 	nextToken := ""
 
-	snapshots := d.State.GetSnapshots()
-	snapLength := len(snapshots)
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].Id < snapshots[j].Id
+	snapList, err := d.RestClient.Resource(schema.GroupVersionResource{
+		Group: "snapshot.storage.k8s.io",
+		Resource: "volumesnapshotcontents",
+		Version: "v1",
+	}).List(ctx, v1.ListOptions{})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed retrieving snapshots %s", err.Error())
+	}
+	snapLength := len(snapList.Items)
+	sort.Slice(snapList.Items, func(i, j int) bool {
+		return snapList.Items[i].GetName() < snapList.Items[j].GetName()
 	})
+
 
 	maxEntries := int(request.GetMaxEntries())
 	if maxEntries == 0 { maxEntries = snapLength }
@@ -504,15 +461,23 @@ func (d *Driver) ListSnapshots(ctx context.Context, request *csi.ListSnapshotsRe
 
 	for index := startingIndex - 1; index < snapLength && index < startingIndex + maxEntries - 1; index++ {
 
-		snap := snapshots[index]
+		snap := snapList.Items[index]
+		snapSpec := snap.Object["spec"].(map[string]interface{})
+		snapStatus := snap.Object["status"].(map[string]interface{})
+		volID := snapSpec["source"].(map[string]interface{})["volumeHandle"].(string)
+		snapID := snapStatus["snapshotHandle"].(string)
+		restoreSize := snapStatus["restoreSize"].(int64)
+		readyToUse := snapStatus["readyToUse"].(bool)
+		creationTime := snapStatus["creationTime"].(int64)
+		ts := timestamppb.New(time.Unix(creationTime, 0))
 
 		entries = append(entries, &csi.ListSnapshotsResponse_Entry{
 			Snapshot: &csi.Snapshot{
-				SnapshotId: snap.Id,
-				SizeBytes: snap.SizeBytes,
-				SourceVolumeId: snap.VolID,
-				CreationTime: snap.CreationTime,
-				ReadyToUse: snap.ReadyToUse,
+				SnapshotId: snapID,
+				SizeBytes: restoreSize,
+				SourceVolumeId: volID,
+				CreationTime: ts,
+				ReadyToUse: readyToUse,
 			},
 		})
 	}

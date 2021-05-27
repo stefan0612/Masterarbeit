@@ -16,7 +16,6 @@ import (
 	"path"
 	"path/filepath"
 	"smb-csi/driver/mounter"
-	"smb-csi/driver/state"
 )
 
 const (
@@ -34,7 +33,6 @@ type Driver struct {
 	PVClient   v1.PersistentVolumeInterface
 	RestClient dynamic.Interface
 	server     *grpc.Server
-	State      state.State
 }
 
 func NewDriver(nodeID string) (*Driver, error) {
@@ -43,8 +41,6 @@ func NewDriver(nodeID string) (*Driver, error) {
 		klog.Infof("Error creating state directory: %s", stateDirErr)
 		return nil, stateDirErr
 	}
-
-	smbState := state.New(path.Join(driverStateDir, "state.json"))
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -57,15 +53,12 @@ func NewDriver(nodeID string) (*Driver, error) {
 		StateDir: driverStateDir,
 		Mounter:  *mounter.NewMounter(),
 		NodeID:   nodeID,
-		State:    smbState,
 	}
 
 	client, err := kubernetes.NewForConfig(config)
 	pvClient := client.CoreV1().PersistentVolumes()
 	driver.PVClient = pvClient
 
-	// No other possibility known to request existing volumesnapshots, because go-client has no snapshot support
-	// Will not work with Version v1beta1 or v1alpha1, thus only use API-version v1 to create snapshots
 	restClient, _ := dynamic.NewForConfig(config)
 	driver.RestClient = restClient
 

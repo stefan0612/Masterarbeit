@@ -12,6 +12,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: controllerserver
+  namespace: kube-system
 spec:
   serviceName: controllerserver
   selector:
@@ -59,29 +60,6 @@ spec:
           volumeMounts:
             - mountPath: /csi
               name: driversocket
-
-        - name: external-health-monitor-controller
-          image: gcr.io/k8s-staging-sig-storage/csi-external-health-monitor-controller:canary
-          args:
-            - --v=5
-            - --csi-address=/csi/csi.sock
-            - --leader-election
-            - --http-endpoint=:8080
-          volumeMounts:
-            - name: driversocket
-              mountPath: /csi
-          ports:
-            - containerPort: 8080
-              name: http-endpoint
-              protocol: TCP
-          livenessProbe:
-            failureThreshold: 1
-            httpGet:
-              port: http-endpoint
-              path: /healthz/leader-election
-            initialDelaySeconds: 10
-            timeoutSeconds: 10
-            periodSeconds: 20
 
         - name: external-snapshotter
           image: k8s.gcr.io/sig-storage/csi-snapshotter:v4.1.0
