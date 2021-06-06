@@ -1,0 +1,26 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: flex-provisioner
+spec:
+  serviceAccountName: flex-provisioner
+  containers:
+    - name: flex-provisioner
+      image: seitenbau/smb-flex-provisioner
+      resources:
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      args:
+        - "-provisioner=seitenbau/smb-flex-provisioner"
+        - "-execCommand=/usr/libexec/kubernetes/kubelet-plugins/volume/exec/seitenbau~smb/smb"
+        - "-flexDriver=seitenbau/smb"
+      imagePullPolicy: "IfNotPresent"
+      volumeMounts:
+        - mountPath: /usr/libexec/kubernetes/kubelet-plugins/volume/exec
+          name: flexvolume-dir
+  volumes:
+    - hostPath:
+        path: /usr/libexec/kubernetes/kubelet-plugins/volume/exec
+        type: DirectoryOrCreate
+      name: flexvolume-dir

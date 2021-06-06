@@ -1,0 +1,32 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: flex-set
+spec:
+  selector:
+    matchLabels:
+      app: flex-set
+  template:
+    metadata:
+      name: flex-set
+      labels:
+        app: flex-set
+    spec:
+      containers:
+        - image: seitenbau/smb-flexdriver-installer
+          imagePullPolicy: "IfNotPresent"
+          env:
+            - name: VENDOR
+              value: seitenbau
+            - name: DRIVER
+              value: smb
+          name: flex-deploy
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /flexmnt
+              name: flexvolume-mount
+      volumes:
+        - name: flexvolume-mount
+          hostPath:
+            path: /usr/libexec/kubernetes/kubelet-plugins/volume/exec/

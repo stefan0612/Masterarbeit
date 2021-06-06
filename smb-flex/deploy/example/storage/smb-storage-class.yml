@@ -1,0 +1,10 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: smb
+provisioner: seitenbau/smb-flex-provisioner
+reclaimPolicy: Delete
+parameters:
+  server: 10.96.0.149
+  share: share
+  secretRef: my-secret
