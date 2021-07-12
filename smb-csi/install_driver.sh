@@ -1,3 +1,5 @@
+minikube addons enable volumesnapshots
+eval $(minikube docker-env)
 make
 # Image 'seitenbau/smb-csi-driver' needs to be deployed to dockerhub before usage
 # Alternatively build image directly into kubernetes env and pull image locally
