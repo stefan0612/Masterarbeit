@@ -22,5 +22,6 @@ for only installing the driver, including the node-server and controller-server.
 * GO version: 1.13.8
 
 ### Measurement hardware setup
-* CPU: Intel Core i7-10700k
+* CPU: Intel Core i7-10700k (8 Cores, 16 Threads)
 * RAM: 32GB
+* SSD: Samsung 970 EVO Plus NVMe

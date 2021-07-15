@@ -27,7 +27,7 @@ var totalPodTime time.Duration
 var totalTime time.Duration
 
 var (
-	driver = 		 flag.String("driver","smb","Name of the used driver")
+	driver = 		 flag.String("driver","glusterfs","Name of the used driver")
 	master = 		 flag.String("master","https://192.168.49.2:8443","URL of the Kubernetes Master")
 	config = 		 flag.String("config","/home/stefan/.kube/config","Path to Kubernetes Config (usually $HOME/.kube/config)")
 	namespace = 	 flag.String("namespace","default","Namespace for creating PVCs and Pods")
