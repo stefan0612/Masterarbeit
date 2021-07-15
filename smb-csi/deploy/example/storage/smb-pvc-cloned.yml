@@ -8,7 +8,7 @@ spec:
   resources:
     requests:
       storage: 1Gi
-  storageClassName: smb
+  storageClassName: smb-csi
   dataSource:
     name: pvc-smb
     kind: PersistentVolumeClaim

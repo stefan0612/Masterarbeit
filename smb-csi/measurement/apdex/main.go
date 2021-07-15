@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/go-echarts/go-echarts/v2/charts"
 	"github.com/go-echarts/go-echarts/v2/opts"
@@ -21,22 +22,90 @@ import "k8s.io/client-go/tools/clientcmd"
 
 var timesPVC = make([]time.Duration, 0)
 var timesPod = make([]time.Duration, 0)
+var totalPVCTime time.Duration
+var totalPodTime time.Duration
+var totalTime time.Duration
 
+var (
+	driver = 		 flag.String("driver","smb","Name of the used driver")
+	master = 		 flag.String("master","https://192.168.49.2:8443","URL of the Kubernetes Master")
+	config = 		 flag.String("config","/home/stefan/.kube/config","Path to Kubernetes Config (usually $HOME/.kube/config)")
+	namespace = 	 flag.String("namespace","default","Namespace for creating PVCs and Pods")
+	volumesCount = 	 flag.String("volumesCount", "5", "Number of Volumes to be generated")
+	msToleratedPVC = flag.String("msToleratedPVC", "0", "Number of millis to which the duration of creating PVCs will be tolerated")
+	msToleratedPod = flag.String("msToleratedPod", "0", "Number of millis to which the duration of creating Pods will be tolerated")
+	msFailurePVC = 	 flag.String("msFailurePVC", "0", "Number of millis to which the duration of creating PVCs will be counted as failure")
+	msFailurePod = 	 flag.String("msFailurePod", "0", "Number of millis to which the duration of creating Pods will be counted as failure")
+)
+
+var podNamePattern string
+var pvcNamePattern string
 
 func main() {
 
-	conf, err := clientcmd.BuildConfigFromFlags("https://192.168.49.2:8443", "/home/stefan/.kube/config")
+	flag.Parse()
+	if *driver == "" {
+		println("No valid driverName specified")
+		os.Exit(1)
+	}
+	if *config == "" {
+		println("Path to kube config must be specified")
+		os.Exit(1)
+	}
+	volumesCountParsed, err := strconv.Atoi(*volumesCount)
+	if err != nil {
+		println("volumesCount must be a number")
+		os.Exit(1)
+	}
+	msToleratedPVCParsed, err := strconv.ParseInt(*msToleratedPVC, 10, 64)
+	if err != nil {
+		println("msToleratedPVC must be a number")
+		os.Exit(1)
+	}
+	msFailurePVCParsed, err := strconv.ParseInt(*msFailurePVC, 10, 64)
+	if err != nil {
+		println("msFailurePVC must be a number")
+		os.Exit(1)
+	}
+
+	msToleratedPodParsed, err := strconv.ParseInt(*msToleratedPod, 10, 64)
+	if err != nil {
+		println("msToleratedPod must be a number")
+		os.Exit(1)
+	}
+	msFailurePodParsed, err := strconv.ParseInt(*msFailurePod, 10, 64)
+	if err != nil {
+		println("msFailurePod must be a number")
+		os.Exit(1)
+	}
+
+	podNamePattern = *driver + "-pod-"
+	pvcNamePattern = *driver + "-pvc-"
+
+	conf, err := clientcmd.BuildConfigFromFlags(*master, *config)
 	if err != nil {
 		println(err)
 	}
 
 	client, err := kubernetes.NewForConfig(conf)
-	pvcClient := client.CoreV1().PersistentVolumeClaims("default")
-	podClient := client.CoreV1().Pods("default")
-	MeasurePVCTimesThreaded(pvcClient, 10)
-	MeasurePodTimesThreaded(podClient, 10)
-	generateChart(timesPVC, "Time for provisioning and binding a volume", "barPVC.html", 3500, 4000)
-	generateChart(timesPod, "Time for binding volumes to a client","barPod.html", 24000, 26000)
+	pvcClient := client.CoreV1().PersistentVolumeClaims(*namespace)
+	podClient := client.CoreV1().Pods(*namespace)
+	totalStartTime := time.Now()
+
+	MeasurePVCTimesThreaded(pvcClient, volumesCountParsed)
+	MeasurePodTimesThreaded(podClient, volumesCountParsed)
+
+	totalEndTime := time.Now()
+	totalTime = totalEndTime.Sub(totalStartTime)
+
+	fmt.Printf("TimesPVC: %+v\n", timesPVC)
+	fmt.Printf("TimesPod: %+v\n", timesPod)
+	fmt.Printf("Total Time PVC: %+v\n", totalPVCTime)
+	fmt.Printf("Total Time Pod: %+v\n", totalPodTime)
+	fmt.Printf("Total Time: %+v\n", totalTime)
+
+	generateChart(timesPVC, "Time for provisioning and binding a volume (" + *driver + ")", "barPVC.html", msToleratedPVCParsed, msFailurePVCParsed)
+	generateChart(timesPod, "Time for binding volumes to a client (" + *driver + ")","barPod.html", msToleratedPodParsed, msFailurePodParsed)
 }
 
 func MeasurePVCTimesThreaded(pvcClient v2.PersistentVolumeClaimInterface, count int) {
@@ -51,12 +120,12 @@ func MeasurePVCTimesThreaded(pvcClient v2.PersistentVolumeClaimInterface, count 
 
 	wg.Wait()
 	totalEndTime := time.Now()
-	fmt.Printf("Total Time: %+v\n", totalEndTime.Sub(totalStartTime))
+	totalPVCTime = totalEndTime.Sub(totalStartTime)
 }
 
 func PVCworker(wg *sync.WaitGroup, pvcClient v2.PersistentVolumeClaimInterface, i int) {
 	defer wg.Done()
-	var pvcName = "smb-pvc-" + strconv.Itoa(i)
+	var pvcName = pvcNamePattern + strconv.Itoa(i)
 	start := time.Now()
 	createPVC(pvcClient, pvcName)
 	watchPVC(pvcClient, pvcName)
@@ -69,7 +138,7 @@ func PVCworker(wg *sync.WaitGroup, pvcClient v2.PersistentVolumeClaimInterface, 
 func createPVC(pvcClient v2.PersistentVolumeClaimInterface, pvcName string) {
 
 	var storage = resource.Quantity{}
-	var storageClassName = "smb"
+	var storageClassName = *driver + "-csi"
 
 	storage.Set(1024)
 	pvc := core.PersistentVolumeClaim{
@@ -132,13 +201,13 @@ func MeasurePodTimesThreaded(podClient v2.PodInterface, count int) {
 
 	wg.Wait()
 	totalEndTime := time.Now()
-	fmt.Printf("Total Time: %+v\n", totalEndTime.Sub(totalStartTime))
+	totalPodTime = totalEndTime.Sub(totalStartTime)
 }
 
 func Podworker(wg *sync.WaitGroup, podClient v2.PodInterface, i int) {
 	defer wg.Done()
-	var podName = "smb-pod-" + strconv.Itoa(i)
-	var pvcName = "smb-pvc-" + strconv.Itoa(i)
+	var podName = podNamePattern + strconv.Itoa(i)
+	var pvcName = pvcNamePattern + strconv.Itoa(i)
 	createPod(podClient, podName, pvcName)
 	start := time.Now()
 	watchPod(podClient, podName)
@@ -166,7 +235,7 @@ func createPod(podClient v2.PodInterface, podName string, pvcName string) {
 					VolumeMounts: []core.VolumeMount{
 						{
 							Name: podName,
-							MountPath: "/mnt/smb",
+							MountPath: "/mnt/" + *driver,
 						},
 					},
 				},
@@ -243,6 +312,9 @@ func generateBarItems(data []time.Duration, msTolerated int64, msFailure int64) 
 			Value: data[i].Milliseconds(),
 			ItemStyle: &opts.ItemStyle{
 				Color: func(millis int64) string {
+					if msTolerated == 0 && msFailure == 0 {
+						return ""
+					}
 					if millis > msFailure {
 						return "red"
 					}
