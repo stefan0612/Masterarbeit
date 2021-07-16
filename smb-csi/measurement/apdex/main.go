@@ -27,11 +27,11 @@ var totalPodTime time.Duration
 var totalTime time.Duration
 
 var (
-	driver = 		 flag.String("driver","glusterfs","Name of the used driver")
+	driver = 		 flag.String("driver","smb-simple","Name of the used driver")
 	master = 		 flag.String("master","https://192.168.49.2:8443","URL of the Kubernetes Master")
 	config = 		 flag.String("config","/home/stefan/.kube/config","Path to Kubernetes Config (usually $HOME/.kube/config)")
 	namespace = 	 flag.String("namespace","default","Namespace for creating PVCs and Pods")
-	volumesCount = 	 flag.String("volumesCount", "5", "Number of Volumes to be generated")
+	volumesCount = 	 flag.String("volumesCount", "50", "Number of Volumes to be generated")
 	msToleratedPVC = flag.String("msToleratedPVC", "0", "Number of millis to which the duration of creating PVCs will be tolerated")
 	msToleratedPod = flag.String("msToleratedPod", "0", "Number of millis to which the duration of creating Pods will be tolerated")
 	msFailurePVC = 	 flag.String("msFailurePVC", "0", "Number of millis to which the duration of creating PVCs will be counted as failure")
